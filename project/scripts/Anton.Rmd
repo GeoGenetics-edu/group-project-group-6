@@ -6,11 +6,114 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
 ```
 
+## Loading libraries
+```{r}
+library(phyloseq)
+library(ggplot2)
+```
+
+## loading dataset on genus level
+```{r}
+load("project/data/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+ps_genus <- pylsq
+rm(pylsq)
+```
+
+## Exploring
+```{r}
+ps_genus
+sample_variables(ps_genus)
+head(sample_data(ps_genus))
+
+# how many are healthy/sick?
+table(sample_data(ps_genus)$Disease.MESH.ID, useNA = "ifany")
+```
+## Shannon Rich?
+```{r}
+# Calculate Shannon diversity for all samples
+shannon <- estimate_richness(
+  ps_genus,
+  measures = c("Shannon")
+)
+
+head(shannon)
+```
+## Visualizing shannon
 
 ```{r}
-
+# Basic alpha-diversity plot
+plot_richness(
+  ps_genus,
+  measures = c("Shannon")
+)
 ```
+## Grouping by sick/healthy
+```{r, echo=FALSE}
+# Group samples by health status
+plot_richness(
+  ps_genus,
+  measures = "Shannon",
+  x = "Disease.MESH.ID"
+) +
+  geom_boxplot(alpha = 0.6) +
+  theme_bw()
+```
+### Sjovt med lavere diversitet hos raske. Måske det er fordi, det stadig er på genus level. Flere forskellige genus, men måske færre species pr. genus? HUSK AT TJEK!:)
+
+
+## testing
+```{r}
+# Build the joined table
+shannon_df <- shannon |>
+  tibble::rownames_to_column("sample_id")
+
+meta_df <- sample_data(ps_genus) |>
+  data.frame() |>
+  tibble::rownames_to_column("sample_id")
+
+alpha_div <- dplyr::inner_join(shannon_df, meta_df, by = "sample_id")
+
+# Test
+wilcox.test(Shannon ~ Disease.MESH.ID, data = alpha_div)
+```
+## Now three methods in one
+```{r}
+alpha_metrics <- estimate_richness(
+  ps_genus,
+  measures = c("Shannon", "Simpson", "InvSimpson")
+)
+head(alpha_metrics)
+```
+## test for each
+
+```{r}
+# Reuse your alpha_div table, just rebuild with the new columns
+alpha_metrics_df <- alpha_metrics |> tibble::rownames_to_column("sample_id")
+alpha_div <- dplyr::inner_join(alpha_metrics_df, meta_df, by = "sample_id")
+
+wilcox.test(Shannon    ~ Disease.MESH.ID, data = alpha_div)
+wilcox.test(Simpson    ~ Disease.MESH.ID, data = alpha_div)
+wilcox.test(InvSimpson ~ Disease.MESH.ID, data = alpha_div)
+```
+
+## plotting
+
+```{r}
+plot_richness(
+  ps_genus,
+  measures = c("Shannon", "Simpson", "InvSimpson"),
+  x = "Disease.MESH.ID"
+) +
+  geom_boxplot(alpha = 0.6) +
+  theme_bw()
+```
+
+
+
+
+
+
 
