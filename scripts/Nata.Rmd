@@ -1,0 +1,453 @@
+---
+title: "Nata"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r}
+library(phyloseq)
+library(ggplot2)
+```
+
+```{r}
+
+load("/Users/natalineschlegel/Desktop/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+
+
+
+pylsq
+sample_data(pylsq)
+rank_names(pylsq)
+sample_variables(pylsq)
+```
+```{r}
+ls()
+#RELATIVE ABUNDANCE DATA ALLE TAL LIGGER MELLEM 0 og 0.9 nok allerede normaliseret 
+
+range(otu_table(pylsq))
+ sample_sums(pylsq)[1:10]
+```
+
+
+
+```{r}
+# Calculate Shannon diversity for all samples
+#zero inflation
+shannon <- estimate_richness(
+  pylsq,
+  measures = "Shannon"
+)
+
+head(shannon)
+summary(shannon)
+```
+
+
+
+```{r}
+#Visualizing the alpha diversity
+
+plot_richness(
+  pylsq,
+  measures = "Shannon"
+)
+```
+```{r}
+
+#Hvordan alpha diversity varierer mellem sygdomsgrupper.
+
+
+plot_richness(
+  pylsq,
+  measures = "Shannon",
+  x = "Disease.MESH.ID"
+)
+
+table(sample_data(pylsq)$Disease.MESH.ID)
+
+
+
+```
+```{r}
+
+
+
+plot_richness(
+  pylsq,
+  x = "Disease.MESH.ID",
+  measures = "Shannon"
+) +
+geom_boxplot(alpha = 0.3)
+
+#Venstre: D003924 = Type 2 Diabetes
+
+#Højre: D006262 = Healthy controls
+```
+
+´
+```{r}
+t2d <- subset_samples(
+  pylsq,
+  Disease.MESH.ID == "D003924"
+)
+
+plot_richness(
+  t2d,
+  x = "Country",
+  measures = "Shannon"
+)
+```
+```{r}
+table(sample_data(pylsq)$Country,
+      sample_data(pylsq)$Disease.MESH.ID)
+```
+
+
+```{r}
+hypo <- subset_samples(
+  pylsq,
+  Disease.MESH.ID == "D006262"
+)
+
+plot_richness(
+  hypo,
+  x = "Country",
+  measures = "Shannon"
+)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+plot_richness(
+  pylsq,
+  x = "Recent.antibiotics.use",
+  measures = "Shannon"
+)
+
+plot_richness(
+  pylsq,
+  x = "Country",
+  measures = "Shannon"
+)
+
+plot_richness(
+  pylsq,
+  x = "Sex",
+  measures = "Shannon"
+)
+```
+
+```{r}
+plot_richness(
+  pylsq,
+  x = "Recent.antibiotics.use",
+  measures = c("Shannon", "Simpson")
+)
+```
+
+```{r}
+plot_richness(
+  pylsq,
+  x = "Country",
+  measures = c(
+               "Shannon",
+               "Simpson")
+)
+
+plot_richness(
+  pylsq,
+  x = "Recent.antibiotics.use",
+  measures = c("Shannon", "Simpson")
+)
+
+
+plot_richness(
+  pylsq,
+  x = "Sex",
+  measures =  c("Shannon", "Simpson")
+)
+
+```
+```{r}
+#LAND
+plot_richness(
+  pylsq,
+  x = "Country",
+  color = "Disease.MESH.ID",
+  measures = c("Shannon", "Simpson")
+) +
+scale_color_manual(
+  values = c(
+    "D003924" = "red",
+    "D006262" = "darkgreen"
+  ),
+  labels = c(
+    "Type 2 Diabetes",
+    "Healthy"
+  )
+)
+
+
+
+
+
+# Antibiotica 
+plot_richness(
+  pylsq,
+  x = "Recent.antibiotics.use",
+  color = "Disease.MESH.ID",
+  measures = c("Shannon", "Simpson")
+) +
+scale_color_manual(
+  values = c(
+    "D003924" = "red",
+    "D006262" = "darkgreen"
+  ),
+  labels = c(
+    "Type 2 Diabetes",
+    "Healthy"
+  )
+)
+
+
+
+#MALE/FEMALE  PLOT 
+plot_richness(
+  pylsq,
+  x = "Sex",
+  color = "Disease.MESH.ID",
+  measures = c("Shannon", "Simpson")
+) +
+scale_color_manual(
+  values = c(
+    "D003924" = "red",
+    "D006262" = "darkgreen"
+  ),
+  labels = c(
+    "Type 2 Diabetes",
+    "Healthy"
+  )
+)
+
+
+table(sample_data(pylsq)$Sex, useNA = "ifany")
+
+```
+
+```{r}
+library(vegan)
+
+otu <- as.data.frame(otu_table(pylsq))
+
+otu <- t(otu)
+
+shannon <- diversity(
+  otu,
+  index = "shannon"
+)
+
+plot(
+  sample_data(pylsq)$BMI,
+  shannon,
+  xlab = "BMI",
+  ylab = "Shannon diversity",
+  pch = 16,
+  col = "darkblue"
+)
+```
+```{r}
+library(vegan)
+
+# OTU table: samples skal være rows for vegan
+otu <- as.data.frame(otu_table(pylsq))
+otu <- t(otu)
+
+# Beregn Shannon
+shannon <- diversity(otu, index = "shannon")
+
+# Lav samlet dataframe med metadata
+alpha_df <- data.frame(
+  Shannon = shannon,
+  Disease = sample_data(pylsq)$Disease.MESH.ID,
+  Country = sample_data(pylsq)$Country,
+  Sex = sample_data(pylsq)$Sex,
+  Antibiotics = sample_data(pylsq)$Recent.antibiotics.use,
+  BMI = sample_data(pylsq)$BMI
+)
+
+#1. Disease: Healthy vs T2D
+
+wilcox.test(
+  Shannon ~ Disease,
+  data = alpha_df
+)
+
+
+
+
+
+```
+```{r}
+# 2. Sex: Male vs Female Er gut diversity forskellig mellem mænd og kvinder?
+#behold kun rækker hvor Sex IKKE er missing (NA)
+alpha_sex <- subset(alpha_df, !is.na(Sex) & Sex != "")
+
+wilcox.test(
+  Shannon ~ Sex,
+  data = alpha_sex
+)
+
+# 3. Antibiotics: Y vs N Er Shannon-diversiteten forskellig mellem personer der HAR brugt antibiotika (Y) og personer der IKKE har (N)?
+#Her fjerner vi manglende antibiotika-information.
+alpha_abx <- subset(alpha_df, !is.na(Antibiotics) & Antibiotics != "")
+
+wilcox.test(
+  Shannon ~ Antibiotics,
+  data = alpha_abx
+)
+
+# 4. Country: mange grupper
+kruskal.test(
+  Shannon ~ Country,
+  data = alpha_df
+)
+
+# 5. BMI: kontinuerlig variabel
+alpha_bmi <- subset(alpha_df, !is.na(BMI))
+
+cor.test(
+  alpha_bmi$BMI,
+  alpha_bmi$Shannon,
+  method = "spearman"
+)
+
+```
+```{r}
+#Individuals with Type 2 Diabetes showed significantly lower alpha diversity compared to healthy controls, measured using the Shannon index (Wilcoxon rank-sum test, p = 3.58 × 10⁻¹⁰).
+plot_richness(
+  pylsq,
+  x = "Disease.MESH.ID",
+  measures = c("Shannon", "Simpson")
+) +
+geom_boxplot(alpha = 0.3)
+
+plot_richness(
+  pylsq,
+  x = "Disease.MESH.ID",
+  measures = c("Shannon", "Simpson"),
+  color = "Disease.MESH.ID"
+) +
+geom_boxplot(alpha = 0.3) +
+
+scale_color_manual(
+  values = c(
+    "D003924" = "red",
+    "D006262" = "darkgreen"
+  ),
+  labels = c(
+    "Type 2 Diabetes",
+    "Healthy"
+  )
+) +
+
+labs(
+  color = "Disease"
+)
+```
+
+Vi undersøgte først alpha diversity i microbiome-data ved hjælp af Shannon- og Simpson-indeksene for at måle diversiteten i hver prøve. Derefter sammenlignede vi diversiteten mellem forskellige metadata-grupper som sygdomsstatus, køn, land, antibiotikabrug og BMI. Da microbiome-data ikke er normalfordelte og ofte indeholder mange zeros, anvendte vi ikke-parametriske tests såsom Wilcoxon rank-sum test, Kruskal-Wallis test og Spearman-korrelation. Resultaterne viste en signifikant forskel i alpha diversity mellem raske individer og personer med Type 2 Diabetes samt mellem forskellige lande og mellem køn. Derimod fandt vi ingen signifikant sammenhæng mellem BMI og alpha diversity, mens antibiotikabrug viste en næsten signifikant effekt.
+
+
+
+```{r} 
+#BETA DISVERSITY
+# -----------------------------
+# Beta diversity analysis
+# Bray-Curtis, PCoA, PERMANOVA
+# -----------------------------
+
+library(phyloseq)
+library(vegan)
+library(ggplot2)
+
+# 1. OTU table
+# Vegan kræver: samples = rows, taxa = columns
+otu <- as.data.frame(otu_table(pylsq))
+
+# Hvis taxa er rows, skal tabellen transponeres
+if (taxa_are_rows(pylsq)) {
+  otu <- t(otu)
+}
+
+# 2. Metadata
+metadata <- as.data.frame(sample_data(pylsq))
+
+# Sørg for at rækkefølgen matcher mellem OTU og metadata
+metadata <- metadata[rownames(otu), ]
+
+# 3. Bray-Curtis distance
+bray_dist <- vegdist(otu, method = "bray")
+
+# 4. PCoA ordination
+pcoa <- cmdscale(bray_dist, k = 2, eig = TRUE)
+
+pcoa_df <- data.frame(
+  PCoA1 = pcoa$points[,1],
+  PCoA2 = pcoa$points[,2],
+  Disease = metadata$Disease.MESH.ID,
+  Country = metadata$Country,
+  Sex = metadata$Sex,
+  Antibiotics = metadata$Recent.antibiotics.use,
+  BMI = metadata$BMI
+)
+
+# 5. Plot PCoA colored by disease
+ggplot(pcoa_df, aes(x = PCoA1, y = PCoA2, color = Disease)) +
+  geom_point(size = 2, alpha = 0.8) +
+  scale_color_manual(
+    values = c(
+      "D003924" = "red",
+      "D006262" = "darkgreen"
+    ),
+    labels = c(
+      "Type 2 Diabetes",
+      "Healthy"
+    )
+  ) +
+  labs(
+    title = "PCoA based on Bray-Curtis distance",
+    x = "PCoA1",
+    y = "PCoA2",
+    color = "Disease"
+  ) +
+  theme_classic()
+
+metadata <- data.frame(sample_data(pylsq))
+
+#6 PERMANOVA: disease effect
+adonis2(
+  bray_dist ~ Disease.MESH.ID,
+  data = metadata,
+  permutations = 999
+)
+
+#7 PERMANOVA med covariates
+adonis2(
+  bray_dist ~ Disease.MESH.ID + Country + Sex + Recent.antibiotics.use + BMI,
+  data = metadata,
+  permutations = 999
+
+)
+```
+
+
