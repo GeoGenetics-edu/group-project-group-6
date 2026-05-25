@@ -1,0 +1,270 @@
+---
+title: "Antons legestue species niveau"
+author: "Anton"
+date: "2026-05-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+```
+
+## Loading libraries
+```{r}
+library(phyloseq)
+library(ggplot2)
+library(vegan)
+```
+
+## loading dataset on genus level
+```{r}
+load("project/data/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
+ps_species <- pylsq
+rm(pylsq)
+```
+
+## Exploring
+```{r}
+ps_species
+sample_variables(ps_species)
+head(sample_data(ps_species))
+
+# how many are healthy/sick?
+table(sample_data(ps_species)$Disease.MESH.ID, useNA = "ifany")
+```
+## Shannon Rich?
+```{r}
+# Calculate Shannon diversity for all samples
+shannon <- estimate_richness(
+  ps_species,
+  measures = c("Shannon")
+)
+
+head(shannon)
+```
+## Visualizing shannon
+
+```{r}
+# Basic alpha-diversity plot
+plot_richness(
+  ps_species,
+  measures = c("Shannon")
+)
+```
+## Grouping by sick/healthy
+```{r, echo=FALSE}
+# Group samples by health status
+plot_richness(
+  ps_species,
+  measures = "Shannon",
+  x = "Disease.MESH.ID"
+) +
+  geom_boxplot(alpha = 0.6) +
+  theme_bw()
+```
+### Sjovt med lavere diversitet hos raske. Måske det er fordi, det stadig er på genus level. Flere forskellige genus, men måske færre species pr. genus? HUSK AT TJEK!:)
+
+
+## testing
+```{r}
+# Build the joined table
+shannon_df <- shannon |>
+  tibble::rownames_to_column("sample_id")
+
+meta_df <- sample_data(ps_species) |>
+  data.frame() |>
+  tibble::rownames_to_column("sample_id")
+
+alpha_div <- dplyr::inner_join(shannon_df, meta_df, by = "sample_id")
+
+# Test
+wilcox.test(Shannon ~ Disease.MESH.ID, data = alpha_div)
+```
+## Now three methods in one
+```{r}
+alpha_metrics <- estimate_richness(
+  ps_species,
+  measures = c("Shannon", "Simpson", "InvSimpson")
+)
+head(alpha_metrics)
+```
+## test for each
+
+```{r}
+# Reuse your alpha_div table, just rebuild with the new columns
+alpha_metrics_df <- alpha_metrics |> tibble::rownames_to_column("sample_id")
+alpha_div <- dplyr::inner_join(alpha_metrics_df, meta_df, by = "sample_id")
+
+wilcox.test(Shannon    ~ Disease.MESH.ID, data = alpha_div)
+wilcox.test(Simpson    ~ Disease.MESH.ID, data = alpha_div)
+wilcox.test(InvSimpson ~ Disease.MESH.ID, data = alpha_div)
+```
+
+## plotting
+
+```{r}
+plot_richness(
+  ps_species,
+  measures = c("Shannon", "Simpson", "InvSimpson"),
+  x = "Disease.MESH.ID"
+) +
+  geom_boxplot(alpha = 0.6) +
+  theme_bw()
+```
+
+## T2D vs Healthy could differ in Shannon just because of different sequencing depths. Testing if thats the case
+```{r}
+# Spearman correlation between depth and Shannon
+cor.test(alpha_div$Nr..reads.sequenced, alpha_div$Shannon, method = "spearman")
+
+ggplot(alpha_div, aes(x = Nr..reads.sequenced, y = Shannon, color = Disease.MESH.ID)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm") +
+  scale_x_log10() +
+  theme_bw()
+```
+Interpretation: All three diversity metrics — capturing different parts of the rare-to-dominant spectrum — agree. T2D patients show higher genus-level diversity than healthy controls, and this is NOT explained by differences in sequencing depth.
+
+```{r}
+library(effectsize)
+rank_biserial(Shannon ~ Disease.MESH.ID, data = alpha_div)
+```
+# Transform to relative abundance
+```{r}
+ps_rel <- transform_sample_counts(ps_species, function(x) x / sum(x))
+# (your data is already relative abundance, but this normalizes any per-sample drift)
+```
+# Distance matrix
+```{r}
+bray_dist <- distance(ps_rel, method = "bray")
+```
+# Ordinate (PCoA)
+```{r}
+ord_bray <- ordinate(ps_rel, method = "PCoA", distance = bray_dist)
+```
+
+# Plot
+```{r}
+plot_ordination(ps_rel, ord_bray, color = "Disease.MESH.ID") +
+  geom_point(size = 2) +
+  stat_ellipse() +     # adds a 95% ellipse per group
+  theme_bw()
+```
+```{r}
+# Extract sample metadata
+sample_df <- sample_data(ps_rel) |> data.frame()
+
+# PERMANOVA — does composition differ between T2D and Healthy?
+adonis_bray <- adonis2(
+  bray_dist ~ Disease.MESH.ID,
+  data = sample_df,
+  permutations = 999
+)
+adonis_bray
+
+# betadisper — are within-group dispersions equal?
+dispersion_bray <- betadisper(bray_dist, sample_df$Disease.MESH.ID)
+anova(dispersion_bray)
+plot(dispersion_bray)
+```
+
+# 1. Check Project.ID as a confounder (still important from before):
+```{r}
+table(sample_data(ps_rel)$Project.ID, sample_data(ps_rel)$Disease.MESH.ID)
+```
+
+
+```{r}
+# Stratified PERMANOVA — test disease effect WITHIN each project
+adonis2(
+  bray_dist ~ Disease.MESH.ID,
+  data = sample_df,
+  strata = sample_df$Project.ID,    # restrict permutations within projects
+  permutations = 999
+)
+```
+
+```{r}
+adonis2(
+  bray_dist ~ Project.ID + Disease.MESH.ID,
+  data = sample_df,
+  by = "margin",            # test each term given the other
+  permutations = 999
+)
+```
+
+```{r}
+ps_clean <- subset_samples(ps_rel, Project.ID == "PRJNA422434")
+bray_dist_clean <- distance(ps_clean, method = "bray")
+sample_df_clean <- sample_data(ps_clean) |> data.frame()
+
+# PERMANOVA on the clean subset
+adonis2(
+  bray_dist_clean ~ Disease.MESH.ID,
+  data = sample_df_clean,
+  permutations = 999
+)
+
+# Also check dispersion on the clean subset
+dispersion_clean <- betadisper(bray_dist_clean, sample_df_clean$Disease.MESH.ID)
+anova(dispersion_clean)
+```
+
+```{r}
+alpha_clean <- alpha_div[alpha_div$Project.ID == "PRJNA422434", ]
+wilcox.test(Shannon ~ Disease.MESH.ID, data = alpha_clean)
+rank_biserial(Shannon ~ Disease.MESH.ID, data = alpha_clean)
+```
+
+```{r}
+# ---- Jaccard ----
+# Convert to presence/absence
+ps_pa_clean <- transform_sample_counts(ps_clean, function(x) ifelse(x > 0, 1, 0))
+
+# Distance
+jaccard_dist_clean <- distance(ps_pa_clean, method = "jaccard", binary = TRUE)
+
+# Ordinate + plot
+ord_jaccard <- ordinate(ps_pa_clean, method = "PCoA", distance = jaccard_dist_clean)
+plot_ordination(ps_pa_clean, ord_jaccard, color = "Disease.MESH.ID") +
+  geom_point(size = 2) +
+  stat_ellipse() +
+  theme_bw() +
+  ggtitle("Jaccard — PRJNA422434 only")
+
+# PERMANOVA + betadisper
+adonis2(jaccard_dist_clean ~ Disease.MESH.ID, data = sample_df_clean, permutations = 999)
+disp_j <- betadisper(jaccard_dist_clean, sample_df_clean$Disease.MESH.ID)
+anova(disp_j)
+```
+
+```{r}
+# ---- Aitchison (CLR + Euclidean) ----
+# Pull the OTU matrix (samples × taxa)
+otu_clean <- as(otu_table(ps_clean), "matrix")
+if (taxa_are_rows(ps_clean)) otu_clean <- t(otu_clean)
+
+# Aitchison distance with pseudocount handling built in
+aitch_dist_clean <- vegdist(otu_clean, method = "aitchison", pseudocount = 1)
+
+# Ordinate — for a vegan distance you can use cmdscale or stick with ordinate()
+# Easiest: feed the distance to ordinate() as 'distance' argument
+ord_aitch <- ordinate(ps_clean, method = "PCoA", distance = aitch_dist_clean)
+plot_ordination(ps_clean, ord_aitch, color = "Disease.MESH.ID") +
+  geom_point(size = 2) +
+  stat_ellipse() +
+  theme_bw() +
+  ggtitle("Aitchison — PRJNA422434 only")
+
+# PERMANOVA + betadisper
+adonis2(aitch_dist_clean ~ Disease.MESH.ID, data = sample_df_clean, permutations = 999)
+disp_a <- betadisper(aitch_dist_clean, sample_df_clean$Disease.MESH.ID)
+anova(disp_a)
+```
+
+```{r}
+# Mean distance to group centroid, per group
+disp_j$group.distances    # or
+boxplot(disp_j, main = "Jaccard dispersion by group")
+```
+
