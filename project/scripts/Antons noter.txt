@@ -1,0 +1,12 @@
+Final alpha-diversity verdict
+Statistically robust: p < 10⁻⁹ across three metrics
+Biologically meaningful: medium effect (0.36), not just a large-N artifact
+Not confounded by depth: ρ ≈ 0
+Direction: T2D > Healthy (the counterintuitive but defensible finding)
+That's a complete alpha diversity section for your report. You can defend every choice at the oral exam:
+
+Why Wilcoxon? — t-test fails on microbiome data (zero inflation, right skew, non-normality, per Alberdi lecture §2)
+Why three metrics? — they weight rare vs dominant taxa differently; agreement = robust finding
+Why not Observed? — uninformative on genus-level relative abundance (capped at 58, no count semantics)
+Direction is unusual — T2D literature is mixed; possible drivers include metformin, diet, geography
+Is depth a confounder? — explicitly tested, no (ρ ≈ 0)
