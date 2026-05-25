@@ -1,0 +1,16 @@
+---
+title: "Antons legestue"
+author: "Anton"
+date: "2026-05-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+
+```
+
