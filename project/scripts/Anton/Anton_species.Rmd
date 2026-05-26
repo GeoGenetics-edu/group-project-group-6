@@ -28,7 +28,6 @@ rm(pylsq)
 ps_species
 sample_variables(ps_species)
 head(sample_data(ps_species))
-
 # how many are healthy/sick?
 table(sample_data(ps_species)$Disease.MESH.ID, useNA = "ifany")
 ```
