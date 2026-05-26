@@ -14,12 +14,14 @@ knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
 library(phyloseq)
 library(ggplot2)
 library(vegan)
+library(effectsize)
 ```
 
 ## loading dataset on genus level
 ```{r}
 load("project/data/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
 ps_genus <- pylsq
+# ps_genus <- subset_samples(ps_genus, Project.ID == "PRJNA422434") only china
 rm(pylsq)
 ```
 
@@ -28,6 +30,7 @@ rm(pylsq)
 ps_genus
 sample_variables(ps_genus)
 head(sample_data(ps_genus))
+
 
 # how many are healthy/sick?
 table(sample_data(ps_genus)$Disease.MESH.ID, useNA = "ifany")
@@ -126,7 +129,6 @@ ggplot(alpha_div, aes(x = Nr..reads.sequenced, y = Shannon, color = Disease.MESH
 Interpretation: All three diversity metrics — capturing different parts of the rare-to-dominant spectrum — agree. T2D patients show higher genus-level diversity than healthy controls, and this is NOT explained by differences in sequencing depth.
 
 ```{r}
-library(effectsize)
 rank_biserial(Shannon ~ Disease.MESH.ID, data = alpha_div)
 ```
 # Transform to relative abundance
@@ -170,6 +172,8 @@ plot(dispersion_bray)
 
 # 1. Check Project.ID as a confounder (still important from before):
 ```{r}
+table(sample_data(ps_rel)$Country, sample_data(ps_rel)$Disease.MESH.ID)
+
 table(sample_data(ps_rel)$Project.ID, sample_data(ps_rel)$Disease.MESH.ID)
 ```
 
