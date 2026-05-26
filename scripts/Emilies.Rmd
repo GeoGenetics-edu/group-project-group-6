@@ -1,0 +1,248 @@
+---
+title: "Emilies"
+output: html_document
+---
+
+Først instaleres phyloseq
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("phyloseq")
+```
+
+```{r}
+install.packages("lifecycle")
+```
+
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("microbiome")
+```
+
+Load the required R packages
+The Rmd begins by loading the packages used for microbiome data handling, data wrangling, plotting, model fitting, and ordination:
+This hidden setup chunk tells R Markdown to show the code in the rendered practical while suppressing routine package messages and warnings. That keeps the rendered HTML focused on the analysis output rather than package startup text.
+```{r}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+library(phyloseq)
+library(vegan)
+library(dplyr)
+library(tibble)
+library(purrr)
+library(stringr)
+library(ggplot2)
+library(tidyverse)
+library(ggh4x)
+library(lme4)
+library(lmerTest)
+library(broom.mixed)
+library(microbiome)
+```
+
+
+Load the phyloseq object - genus 
+```{r}
+# Read the saved phyloseq  - genus 
+obj_name <- load("~/Desktop/Metagenomic/Project/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+
+# get() tager et navn som tekst og finder det rigtige objekt i R-miljøet.
+pylsq <- get(obj_name)
+
+# Print a compact summary of the phyloseq object, including sample and taxon counts.
+
+# Inspect the sample metadata table attached to the phyloseq object.
+sample_data(pylsq)
+
+# Antal taxa
+ntaxa(pylsq)
+# 58
+
+# List the available taxonomic ranks, such as kingdom, phylum, genus, and species.
+rank_names(pylsq)
+# "Domain"  "Phylum"  "Class"   "Order"   "Family"  "Genus"   "Species"
+
+# List the metadata variables that can be used for filtering, plotting, or modelling.
+sample_variables(pylsq)
+
+
+# Taxa-table 
+tax_table(pylsq)
+head(as.data.frame(tax_table(pylsq)))
+```
+
+Load the phyloseq object - species
+```{r}
+# Read the saved phyloseq  - genus 
+obj_name2 <- load("~/Desktop/Metagenomic/Project/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
+
+# get() tager et navn som tekst og finder det rigtige objekt i R-miljøet.
+pylsq2 <- get(obj_name2)
+
+# Print a compact summary of the phyloseq object, including sample and taxon counts.
+
+# Inspect the sample metadata table attached to the phyloseq object.
+sample_data(pylsq2)
+
+ntaxa(pylsq)
+
+# List the available taxonomic ranks, such as kingdom, phylum, genus, and species.
+rank_names(pylsq2)
+# "Domain"  "Phylum"  "Class"   "Order"   "Family"  "Genus"   "Species"
+
+# List the metadata variables that can be used for filtering, plotting, or modelling.
+sample_variables(pylsq2)
+```
+
+Calculation of alpha diversity  - Shannon 
+The function estimate_richness() calculates alpha-diversity estimates for each sample, while plot_richness() provides quick visualisations of those estimates across samples or sample groups.
+
+```{r}
+# Calculate Shannon diversity for all samples
+shannon <- estimate_richness(
+  pylsq,
+  measures = c("Shannon")
+)
+
+# The function estimate_richness() calculates the selected diversity measures for every sample in the phyloseq object and returns the results as a data frame.
+
+
+head(shannon)
+```
+
+Visualising alpha diversity - Shannon 
+
+The function plot_richness() creates quick exploratory visualisations of alpha-diversity patterns across samples. The simplest possible plot displays diversity values for each sample individually.
+
+```{r}
+# Basic alpha-diversity plot
+plot_richness(
+  pylsq,
+  measures = c("Shannon")
+)
+```
+
+
+Gruped data
+```{r}
+# Group samples by disease 
+plot_richness(
+  pylsq,
+  measures = c("Shannon"),
+  x = "Disease.MESH.ID"
+)
+```
+
+```{r}
+# Colour samples according to another metadata variable
+pylsq_noNA <- subset_samples(pylsq, !is.na(BMI))
+
+plot_richness(
+  pylsq_noNA,
+  measures = c("Shannon"),
+  x = "Disease.MESH.ID",
+  color = "BMI"
+)
+```
+
+```{r}
+# Colour samples according to another metadata variable
+plot_richness(
+  pylsq,
+  measures = c("Shannon"),
+  x = "Disease.MESH.ID",
+  color = "Host.age"
+)
+```
+
+The code below calculates both Shannon diversity and Observed richness separately, converts the sample names into an explicit column (sample_id), extracts the sample metadata, and finally merges everything into a single table.
+
+
+```{r}
+# Calculate Shannon diversity
+shannon <- estimate_richness(
+  pylsq,
+  measures = "Shannon"
+) %>%
+  rownames_to_column("sample_id")
+
+
+# Extract sample metadata
+sample_df <- sample_data(pylsq) %>%
+  data.frame() %>%
+  rownames_to_column("sample_id")
+
+# Combine diversity estimates and metadata
+alpha_diversity <- inner_join(
+  shannon,
+  sample_df,
+  by = "sample_id"
+) 
+
+head(alpha_diversity)
+```
+
+The resulting alpha_diversity data frame contains:
+
+one row per sample,
+alpha-diversity estimates,
+and all associated sample metadata variables.
+This format is particularly useful because it allows us to use standard tidyverse and statistical functions for downstream analyses.
+
+Undersøg:
+Do microbial communities from disese states show significantly different alpha diversity?
+```{r}
+# De forskellife disease status undersøges: 
+table(alpha_diversity$Disease.MESH.ID)
+# der er kun to så en wilcox.test bruges 
+wilcox_shannon <- wilcox.test(
+  Shannon ~ Disease.MESH.ID,
+  data = alpha_diversity
+)
+wilcox_shannon
+
+```
+
+
+Undersøg:
+Do microbial communities from sex show significantly different alpha diversity?
+```{r}
+# De forskellife disease status undersøges: 
+table(alpha_diversity$Sex)
+
+alpha_diversity_noNA <- subset(
+  alpha_diversity,
+  !is.na(Sex) & Sex != ""
+)
+# der er kun to så en wilcox.test bruges 
+wilcox_shannon_2 <- wilcox.test(
+  Shannon ~ Sex,
+  data = alpha_diversity_noNA
+)
+
+wilcox_shannon_2
+```
+Undersøg:
+Do microbial communities from different contries show significantly different alpha diversity?
+```{r}
+# De forskellife lande  undersøges: 
+table(alpha_diversity$Country)
+# der er kun to så en wilcox.test bruges 
+kruskal_country <- kruskal.test(
+  Shannon ~ Country,
+  data = alpha_diversity
+)
+kruskal_country 
+
+```
+
+
+
+
+
+
+
+
