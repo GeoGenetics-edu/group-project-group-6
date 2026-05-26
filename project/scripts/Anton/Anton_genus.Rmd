@@ -30,7 +30,7 @@ rm(pylsq)
 ps_genus
 sample_variables(ps_genus)
 head(sample_data(ps_genus))
-
+otu_table(ps_genus)
 
 # how many are healthy/sick?
 table(sample_data(ps_genus)$Disease.MESH.ID, useNA = "ifany")
