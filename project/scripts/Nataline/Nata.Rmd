@@ -460,9 +460,10 @@ adonis2(
   bray_dist2 ~ Disease.MESH.ID + Country + Sex + Recent.antibiotics.use + BMI,
   data = metadata2,
   permutations = 999
-)
+) 
   
 #FUCK DET HELE 
 ```
+
 
 
