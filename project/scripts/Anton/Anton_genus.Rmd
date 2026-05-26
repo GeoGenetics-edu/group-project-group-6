@@ -31,6 +31,7 @@ ps_genus
 sample_variables(ps_genus)
 head(sample_data(ps_genus))
 otu_table(ps_genus)
+rank_names(ps_genus)
 
 # how many are healthy/sick?
 table(sample_data(ps_genus)$Disease.MESH.ID, useNA = "ifany")
@@ -147,7 +148,7 @@ ord_bray <- ordinate(ps_rel, method = "PCoA", distance = bray_dist)
 
 # Plot
 ```{r}
-plot_ordination(ps_rel, ord_bray, color = "Disease.MESH.ID") +
+plot_ordination(ps_rel, ord_bray, color = "Project.ID") +
   geom_point(size = 2) +
   stat_ellipse() +     # adds a 95% ellipse per group
   theme_bw()
@@ -170,6 +171,21 @@ anova(dispersion_bray)
 plot(dispersion_bray)
 ```
 
+```{r}
+# PERMANOVA on Project.ID alone (no Disease covariate)
+adonis2(bray_dist ~ Project.ID, data = sample_df, permutations = 999)
+
+# Dispersion check
+disp_project <- betadisper(bray_dist, sample_df$Project.ID)
+anova(disp_project)
+plot(disp_project)
+
+# Optionally, pairwise comparison between projects:
+library(pairwiseAdonis)   # may need to install: devtools::install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+pairwise.adonis2(bray_dist ~ Project.ID, data = sample_df)
+```
+
+
 # 1. Check Project.ID as a confounder (still important from before):
 ```{r}
 table(sample_data(ps_rel)$Country, sample_data(ps_rel)$Disease.MESH.ID)
@@ -186,6 +202,9 @@ adonis2(
   strata = sample_df$Project.ID,    # restrict permutations within projects
   permutations = 999
 )
+```
+```{r}
+
 ```
 
 
