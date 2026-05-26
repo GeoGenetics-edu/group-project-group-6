@@ -442,12 +442,27 @@ adonis2(
 )
 
 #7 PERMANOVA med covariates
-adonis2(
-  bray_dist ~ Disease.MESH.ID + Country + Sex + Recent.antibiotics.use + BMI,
-  data = metadata,
-  permutations = 999
+metadata2 <- metadata[
+  complete.cases(metadata[, c(
+    "Disease.MESH.ID",
+    "Country",
+    "Sex",
+    "Recent.antibiotics.use",
+    "BMI"
+  )]),
+]
 
+otu2 <- otu[rownames(metadata2), ]
+
+bray_dist2 <- vegdist(otu2, method = "bray")
+
+adonis2(
+  bray_dist2 ~ Disease.MESH.ID + Country + Sex + Recent.antibiotics.use + BMI,
+  data = metadata2,
+  permutations = 999
 )
+
+#FUCK DET HELE 
 ```
 
 
