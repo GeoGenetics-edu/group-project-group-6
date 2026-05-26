@@ -477,3 +477,39 @@ Hvis den ER signifikant:
 → forskellen kan skyldes forskellig spredning snarere end forskellig community composition.
 
 Eftersom den er meget signifikant kan forskellen fra adonis_bray spredning snarere end forskellig community composition.
+
+
+
+Gruped data - country 
+
+```{r}
+# Group samples by disease 
+plot_richness(
+  pylsq,
+  measures = c("Shannon"),
+  x = "Project.ID"
+) +
+  geom_boxplot(alpha = 0.6) +
+  theme_bw()
+
+# Stat 
+kruskal_country <- kruskal.test(
+  Shannon ~ Project.ID,
+  data = alpha_diversity
+)
+kruskal_country 
+
+# pair
+pw_shannon <- pairwise.wilcox.test(
+  x = alpha_diversity$Shannon,
+  g = alpha_diversity$Project.ID,
+  p.adjust.method = "BH"
+)
+pw_shannon
+```
+
+
+
+
+
+
