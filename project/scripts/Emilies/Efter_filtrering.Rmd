@@ -1,0 +1,43 @@
+---
+title: "Efter_filtrering"
+output: html_document
+---
+
+# Sæt directory 
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+```
+
+## Loading libraries
+```{r}
+library(phyloseq)
+library(ggplot2)
+library(vegan)
+library(dplyr)
+library(tibble)
+```
+
+# Load phyloseq  - rå data 
+```{r}
+load("project/data/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+ps_genus <- pylsq
+rm(pylsq) # fjerne pylsq, så man kan have mere end et. 
+
+# Undersøger de to phylseq
+ps_genus
+```
+
+# Kun kina 
+```{r}
+ps_china <- subset_samples(ps_rel,
+                           Project.ID == "PRJNA422434")
+```
+
+# Analyse af alpha diversitet 
+
+# Analyse af beta diversitet 
+
+
+
+
