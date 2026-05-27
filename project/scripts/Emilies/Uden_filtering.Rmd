@@ -81,12 +81,12 @@ hist(sample_sums(ps_genus))
 # compositional-normalisering til sum = 1
 ps_rel <- transform_sample_counts(ps_genus, function(x) x / sum(x))
 # beregning af Bray-dist 
-bray_dist <- distance(ps_genus, method = "bray")
+bray_dist <- distance(ps_rel, method = "bray")
 # Ordinate - Reducerer komplekse afstande til 2D-koordinater så man kan plotte samples.
-ord_bray <- ordinate(ps_genus, method = "PCoA", distance = bray_dist)
+ord_bray <- ordinate(ps_rel, method = "PCoA", distance = bray_dist)
 
 #Plot - for at se hvor forskellige micorbiom samples er
-plot_ordination(ps_genus, ord_bray, color = "Project.ID") +
+plot_ordination(ps_rel, ord_bray, color = "Project.ID") +
   geom_point(size = 2, alpha = 0.7) +
   stat_ellipse() +
   theme_bw() +
@@ -147,6 +147,33 @@ adonis_bray_D <- adonis2(
 adonis_bray_D
 ```
 
+# Dispersion
+However, PERMANOVA results should always be interpreted carefully because significant results can sometimes be driven not only by differences in group location, but also by differences in within-group dispersion.
+
+Checking homogeneity of dispersion
+
+To evaluate this, we can use betadisper() from the vegan package.
+```{r}
+dispersion_bray <- betadisper(
+  bray_dist,
+  sample_df$Project.ID
+)
+
+anova(dispersion_bray)
+plot(dispersion_bray)
+boxplot(disp_project)
+```
+If dispersion differs strongly between groups, then a significant PERMANOVA result should be interpreted with caution.
+
+# Resultat 
+F = 3.96
+p = 0.01985
+
+Det betyder:
+
+mindst ét Project.ID har signifikant forskellig dispersion.
+
+
 ### Alpha diversitet 
 
 The code below calculates both Shannon diversity, converts the sample names into an explicit column (sample_id), extracts the sample metadata, and finally merges everything into a single table.
@@ -203,31 +230,6 @@ pw_shannon <- pairwise.wilcox.test(
 pw_shannon
 ```
 
-# Dispersion
-However, PERMANOVA results should always be interpreted carefully because significant results can sometimes be driven not only by differences in group location, but also by differences in within-group dispersion.
-
-Checking homogeneity of dispersion
-
-To evaluate this, we can use betadisper() from the vegan package.
-```{r}
-dispersion_bray <- betadisper(
-  bray_dist,
-  sample_df$Project.ID
-)
-
-anova(dispersion_bray)
-plot(dispersion_bray)
-boxplot(disp_project)
-```
-If dispersion differs strongly between groups, then a significant PERMANOVA result should be interpreted with caution.
-
-# Resultat 
-F = 3.96
-p = 0.01985
-
-Det betyder:
-
-mindst ét Project.ID har signifikant forskellig dispersion.
 
 
 # Anbefalinger fra AI - NB undersøg senere 
