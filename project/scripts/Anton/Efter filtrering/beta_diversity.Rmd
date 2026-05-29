@@ -1,0 +1,255 @@
+---
+title: "Beta diversity — filtered cohort"
+author: "Anton"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Purpose
+
+Beta diversity within the filtered Chinese cohort (`Project.ID == "PRJNA422434"`, 187 T2D + 172 Healthy). Three distance metrics are computed in parallel because each emphasises a different aspect of community structure:
+
+| Metric | Input data | Aspect captured | Compositionally correct? |
+|---|---|---|---|
+| **Bray–Curtis** | Relative abundance | Abundance differences | No |
+| **Jaccard** | Presence/absence | Membership (which taxa are shared) | N/A (binary) |
+| **Aitchison** | CLR-transformed | Compositional log-ratio differences | **Yes** (Aitchison §7) |
+
+For each metric we run PCoA, PERMANOVA, and `betadisper`. PERMANOVA tests whether group centroids differ; `betadisper` tests whether within-group dispersions are homogeneous. A clean centroid-shift interpretation requires significant PERMANOVA with non-significant betadisper.
+
+# 1. Libraries
+
+```{r libraries}
+library(phyloseq)
+library(vegan)
+library(ggplot2)
+library(dplyr)
+library(tibble)
+```
+
+# 2. Load and filter data
+
+Load the original phyloseq objects and restrict to the Chinese cohort (`Project.ID == "PRJNA422434"`). The rationale for this filter is documented separately; in short, the other two projects in the dataset are case-only and cannot contribute to a case-control comparison.
+
+```{r load-filter}
+# Genus level
+load("project/data/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+ps_genus_clean <- subset_samples(pylsq, Project.ID == "PRJNA422434")
+rm(pylsq)
+
+# Species level
+load("project/data/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
+ps_species_clean <- subset_samples(pylsq, Project.ID == "PRJNA422434")
+rm(pylsq)
+
+ps_genus_clean
+ps_species_clean
+```
+
+# 3. Helper functions
+
+```{r helpers}
+# Prepare phyloseq transformations
+prepare_ps <- function(ps) {
+  list(
+    rel = transform_sample_counts(ps, function(x) x / sum(x)),
+    pa  = transform_sample_counts(ps, function(x) ifelse(x > 0, 1, 0))
+  )
+}
+
+# Compute Aitchison distance via vegdist (handles pseudocount + CLR internally)
+aitchison_distance <- function(ps) {
+  otu <- as(otu_table(ps), "matrix")
+  if (taxa_are_rows(ps)) otu <- t(otu)
+  vegdist(otu, method = "aitchison", pseudocount = 1)
+}
+```
+
+# 4. Compute all distance matrices
+
+```{r compute-distances}
+g <- prepare_ps(ps_genus_clean)
+s <- prepare_ps(ps_species_clean)
+
+# Genus level
+bray_g    <- distance(g$rel, method = "bray")
+jaccard_g <- distance(g$pa,  method = "jaccard", binary = TRUE)
+aitch_g   <- aitchison_distance(ps_genus_clean)
+
+# Species level
+bray_s    <- distance(s$rel, method = "bray")
+jaccard_s <- distance(s$pa,  method = "jaccard", binary = TRUE)
+aitch_s   <- aitchison_distance(ps_species_clean)
+```
+
+# 5. PCoA — all three metrics, both levels
+
+```{r pcoa-all, fig.width=10, fig.height=10}
+make_ord_df <- function(ps_for_plot, dist_obj, metric_label, level_label) {
+  ord <- ordinate(ps_for_plot, method = "PCoA", distance = dist_obj)
+  eig <- ord$values$Relative_eig
+  df  <- plot_ordination(ps_for_plot, ord, type = "samples", justDF = TRUE) |>
+    mutate(metric = metric_label,
+           level  = level_label,
+           ax1_pct = round(100 * eig[1], 1),
+           ax2_pct = round(100 * eig[2], 1))
+  df
+}
+
+ord_dfs <- bind_rows(
+  make_ord_df(g$rel, bray_g,    "Bray-Curtis", "Genus"),
+  make_ord_df(g$pa,  jaccard_g, "Jaccard",     "Genus"),
+  make_ord_df(ps_genus_clean, aitch_g, "Aitchison", "Genus"),
+  make_ord_df(s$rel, bray_s,    "Bray-Curtis", "Species"),
+  make_ord_df(s$pa,  jaccard_s, "Jaccard",     "Species"),
+  make_ord_df(ps_species_clean, aitch_s, "Aitchison", "Species")
+) |>
+  mutate(Disease = ifelse(Disease.MESH.ID == "D003924", "T2D", "Healthy"))
+
+ggplot(ord_dfs, aes(x = Axis.1, y = Axis.2, color = Disease)) +
+  geom_point(size = 1.8, alpha = 0.7) +
+  stat_ellipse(level = 0.95) +
+  facet_grid(level ~ metric, scales = "free") +
+  scale_color_manual(values = c("Healthy" = "#56B4E9", "T2D" = "#E69F00")) +
+  theme_bw() +
+  labs(title = "PCoA across three distance metrics, two taxonomic levels",
+       subtitle = "Filtered cohort PRJNA422434 (n = 359)",
+       x = "PCoA 1", y = "PCoA 2")
+```
+
+# 6. PERMANOVA — all six combinations
+
+```{r permanova-all}
+run_permanova <- function(dist_obj, sample_df, level_label, metric_label) {
+  ad <- adonis2(dist_obj ~ Disease.MESH.ID, data = sample_df, permutations = 999)
+  tibble(
+    level   = level_label,
+    metric  = metric_label,
+    F_stat  = round(ad$F[1], 2),
+    R2      = round(ad$R2[1], 4),
+    p_value = ad$`Pr(>F)`[1]
+  )
+}
+
+sample_df_g <- sample_data(ps_genus_clean)   |> data.frame()
+sample_df_s <- sample_data(ps_species_clean) |> data.frame()
+
+permanova_results <- bind_rows(
+  run_permanova(bray_g,    sample_df_g, "Genus",   "Bray-Curtis"),
+  run_permanova(jaccard_g, sample_df_g, "Genus",   "Jaccard"),
+  run_permanova(aitch_g,   sample_df_g, "Genus",   "Aitchison"),
+  run_permanova(bray_s,    sample_df_s, "Species", "Bray-Curtis"),
+  run_permanova(jaccard_s, sample_df_s, "Species", "Jaccard"),
+  run_permanova(aitch_s,   sample_df_s, "Species", "Aitchison")
+)
+
+permanova_results
+```
+
+# 7. betadisper — dispersion check for each PERMANOVA
+
+```{r betadisper-all}
+run_betadisper <- function(dist_obj, grouping, level_label, metric_label) {
+  disp <- betadisper(dist_obj, grouping)
+  aov_out <- anova(disp)
+  tibble(
+    level   = level_label,
+    metric  = metric_label,
+    F_stat  = round(aov_out$`F value`[1], 2),
+    p_value = aov_out$`Pr(>F)`[1]
+  )
+}
+
+betadisper_results <- bind_rows(
+  run_betadisper(bray_g,    sample_df_g$Disease.MESH.ID, "Genus",   "Bray-Curtis"),
+  run_betadisper(jaccard_g, sample_df_g$Disease.MESH.ID, "Genus",   "Jaccard"),
+  run_betadisper(aitch_g,   sample_df_g$Disease.MESH.ID, "Genus",   "Aitchison"),
+  run_betadisper(bray_s,    sample_df_s$Disease.MESH.ID, "Species", "Bray-Curtis"),
+  run_betadisper(jaccard_s, sample_df_s$Disease.MESH.ID, "Species", "Jaccard"),
+  run_betadisper(aitch_s,   sample_df_s$Disease.MESH.ID, "Species", "Aitchison")
+)
+
+betadisper_results
+```
+
+# 8. Joint summary table
+
+```{r joint-table}
+beta_summary <- permanova_results |>
+  rename(perm_F = F_stat, perm_p = p_value) |>
+  left_join(
+    betadisper_results |>
+      rename(disp_F = F_stat, disp_p = p_value),
+    by = c("level", "metric")
+  ) |>
+  mutate(
+    perm_p_label = ifelse(perm_p < 0.001, "< 0.001", signif(perm_p, 3)),
+    disp_p_label = ifelse(disp_p < 0.001, "< 0.001", signif(disp_p, 3)),
+    cleanly_interpretable = perm_p < 0.05 & disp_p > 0.05
+  )
+
+beta_summary
+```
+
+The `cleanly_interpretable` column flags rows where a significant PERMANOVA result can be interpreted as a true centroid shift (significant PERMANOVA AND non-significant betadisper).
+
+# 9. Covariate-adjusted PERMANOVA
+
+Within the filtered cohort, residual confounders (BMI, age, sex) may still partly explain community variation. The marginal PERMANOVA partitions variance between each predictor adjusted for the others.
+
+```{r adjusted-permanova}
+adjusted_df_g <- sample_df_g |>
+  filter(!is.na(BMI), !is.na(Host.age), !is.na(Sex))
+
+# Re-subset distance matrix to match
+keep_g <- sample_df_g$Run.ID %in% adjusted_df_g$Run.ID
+bray_g_keep <- as.matrix(bray_g)[keep_g, keep_g] |> as.dist()
+
+adonis2(bray_g_keep ~ Disease.MESH.ID + BMI + Host.age + Sex,
+        data = adjusted_df_g,
+        by = "margin",
+        permutations = 999)
+```
+
+```{r adjusted-permanova-aitchison}
+aitch_g_keep <- as.matrix(aitch_g)[keep_g, keep_g] |> as.dist()
+
+adonis2(aitch_g_keep ~ Disease.MESH.ID + BMI + Host.age + Sex,
+        data = adjusted_df_g,
+        by = "margin",
+        permutations = 999)
+```
+
+Aitchison adjusted is the most defensible single test — compositionally correct AND covariate adjusted. If `Disease.MESH.ID` is significant in this model, the disease effect on community composition survives adjustment for BMI, age, and sex within the cohort.
+
+# 10. Interpretation guide
+
+Reading the joint summary:
+
+- **All three metrics significant in PERMANOVA** ⇒ robust disease effect across abundance-based, presence/absence, and compositional perspectives.
+- **Aitchison `cleanly_interpretable = TRUE`** ⇒ the compositionally-rigorous metric gives a clean centroid-shift interpretation.
+- **Disagreement between genus and species** ⇒ informative; the level at which the signal appears tells you about the resolution of the disease effect.
+- **R² values** ⇒ typically 1–5% for disease in human gut microbiome studies; report alongside p-values to avoid over-claiming statistical significance for small effects.
+
+For the report, the cleanest single sentence is: *"PERMANOVA on Aitchison distance, adjusted for BMI, host age, and sex, partitioned X% of community variance to disease state (p = Y) with no dispersion confound (betadisper p = Z)."*
+
+# 11. Save outputs
+
+```{r save-outputs}
+#saveRDS(list(bray = bray_g, jaccard = jaccard_g, aitchison = aitch_g),
+#        "project/results/beta_distances_genus.rds")
+
+#saveRDS(list(bray = bray_s, jaccard = jaccard_s, aitchison = aitch_s),
+#        "project/results/beta_distances_species.rds")
+
+#saveRDS(beta_summary, "project/results/beta_diversity_summary.rds")
+```
