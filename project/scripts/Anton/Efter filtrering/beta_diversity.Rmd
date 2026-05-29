@@ -119,7 +119,7 @@ ggplot(ord_dfs, aes(x = Axis.1, y = Axis.2, color = Disease)) +
   geom_point(size = 1.8, alpha = 0.7) +
   stat_ellipse(level = 0.95) +
   facet_grid(level ~ metric, scales = "free") +
-  scale_color_manual(values = c("Healthy" = "#56B4E9", "T2D" = "#E69F00")) +
+  scale_color_manual(values = c("Healthy" = "#56B4E9", "T2D" = "#EE4B2B")) +
   theme_bw() +
   labs(title = "PCoA across three distance metrics, two taxonomic levels",
        subtitle = "Filtered cohort PRJNA422434 (n = 359)",

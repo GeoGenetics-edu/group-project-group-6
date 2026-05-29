@@ -167,7 +167,7 @@ ggplot(alpha_long, aes(x = Disease, y = value, fill = Disease)) +
   geom_boxplot(alpha = 0.7, outlier.shape = NA) +
   geom_jitter(width = 0.2, alpha = 0.3, size = 0.8) +
   facet_grid(metric ~ level, scales = "free_y") +
-  scale_fill_manual(values = c("Healthy" = "#56B4E9", "T2D" = "#E69F00")) +
+  scale_fill_manual(values = c("Healthy" = "#56B4E9", "T2D" = "#EE4B2B")) +
   theme_bw() +
   theme(legend.position = "none") +
   labs(x = NULL, y = "Alpha diversity",
