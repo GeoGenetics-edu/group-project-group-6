@@ -1,0 +1,319 @@
+---
+title: "Why we can filter — quantitative rationale"
+author: "Anton"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Purpose of this document
+
+This document argues — both structurally and biologically — that restricting the dataset to one cohort (`Project.ID == "PRJNA422434"`, the Chinese case-control study) yields a more interpretable and biologically meaningful comparison than analysing the full 432-sample dataset. Every claim is supported by the relevant test run on the unfiltered data.
+
+The argument has two layers:
+
+1. **Structural** — the design of the other two projects makes them unusable for case-control inference.
+2. **Biological** — even if the other projects had controls, mixing populations would degrade rather than improve the biological signal we want to detect.
+
+# 1. Libraries
+
+```{r libraries}
+library(phyloseq)
+library(vegan)
+library(ggplot2)
+library(dplyr)
+library(tibble)
+library(tidyr)
+library(effectsize)
+library(knitr)
+```
+
+# 2. Load the unfiltered dataset
+
+```{r load-raw}
+load("project/data/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+ps_raw <- pylsq
+rm(pylsq)
+
+ps_raw
+```
+
+# 3. Disease distribution
+
+```{r disease-counts}
+table(sample_data(ps_raw)$Disease.MESH.ID, useNA = "ifany")
+```
+
+# 4. ProjectIDs
+
+```{r project-counts}
+table(sample_data(ps_raw)$Project.ID, useNA = "ifany")
+```
+
+Are they from three different studies? This would introduce more than just geographical noice.
+
+# 5. ProjectID x MeshID
+
+```{r project-by-disease}
+table(sample_data(ps_raw)$Project.ID,
+      sample_data(ps_raw)$Disease.MESH.ID)
+```
+
+Two of three studies contain no healthy controls at all. 
+
+
+# 6. Country structure
+
+```{r country-by-project}
+table(sample_data(ps_raw)$Country,
+      sample_data(ps_raw)$Project.ID)
+```
+
+```{r country-by-disease}
+table(sample_data(ps_raw)$Country,
+      sample_data(ps_raw)$Disease.MESH.ID)
+```
+
+PRJNA422434 = China
+
+# 7. Is there a significant difference between the cohorts?
+
+This section runs the tests that demonstrate how strongly cohort drives community variation.
+
+## 7.1 Compute Bray-Curtis distance on full data
+
+```{r compute-bray-full}
+ps_rel_full    <- transform_sample_counts(ps_raw, function(x) x / sum(x))
+bray_full      <- distance(ps_rel_full, method = "bray")
+sample_df_full <- sample_data(ps_rel_full) |> data.frame()
+```
+
+## 7.2 PCoA — coloured by Project
+
+```{r pcoa-by-project, fig.width=9, fig.height=6}
+ord_full <- ordinate(ps_rel_full, method = "PCoA", distance = bray_full)
+
+plot_ordination(ps_rel_full, ord_full, color = "Project.ID") +
+  geom_point(size = 2, alpha = 0.7) +
+  stat_ellipse(level = 0.95) +
+  theme_bw() +
+  labs(title = "Bray-Curtis PCoA on full dataset — coloured by Project",
+       subtitle = "Three distinct cohort clusters")
+```
+
+## 7.3 PCoA — coloured by Disease (same samples, same positions)
+
+```{r pcoa-by-disease, fig.width=9, fig.height=6}
+plot_ordination(ps_rel_full, ord_full, color = "Disease.MESH.ID") +
+  geom_point(size = 2, alpha = 0.7) +
+  stat_ellipse(level = 0.95) +
+  theme_bw() +
+  labs(title = "Bray-Curtis PCoA on full dataset — coloured by Disease",
+       subtitle = "Disease colour pattern mirrors the cohort pattern above")
+```
+
+The two plots show the same samples in the same positions; only the colour differs. If the disease colouring traces the same shape as the project colouring, what looks like a "T2D vs Healthy" pattern is being driven by cohort membership.
+
+## 7.4 PERMANOVA on Project alone
+
+How much variance does cohort itself explain?
+
+```{r permanova-project}
+adonis2(bray_full ~ Project.ID,
+        data = sample_df_full,
+        permutations = 999)
+```
+Permanova on the full dataset shows that ProjectID explains ~13% of the variance (R^2 = 0.12887) with a large f statistic (F = 31.73) and a significant P-value (0.001).
+
+## 7.5 PERMANOVA on Country alone
+
+Country is partly a relabelling of Project, but verifying same pattern:
+
+```{r permanova-country}
+adonis2(bray_full ~ Country,
+        data = sample_df_full,
+        permutations = 999)
+```
+Same pattern as before, maybe even stronger. Accounts for 14.2% of total variance. (F=9.77, p = 0.001)
+## 7.6 PERMANOVA on Disease alone (unadjusted)
+
+For comparison:
+
+```{r permanova-disease-only}
+adonis2(bray_full ~ Disease.MESH.ID,
+        data = sample_df_full,
+        permutations = 999)
+```
+For comparison, Disease alone on the unfiltered dataset explained 2.964% of variance (F = 13.13, p = 0.001)
+
+## 7.7 Adjusted PERMANOVA: Project and Disease together
+
+The decisive test. With both terms in the model and `by = "margin"`, each is tested adjusted for the other:
+
+```{r permanova-adjusted}
+adonis2(bray_full ~ Project.ID + Disease.MESH.ID,
+        data = sample_df_full,
+        by = "margin",
+        permutations = 999)
+```
+The adjusted PERMANOVA (Project.ID + Disease.MESH.ID, by = 'margin') partitioned 11.3% of community variance to Project (F = 28.21, p = 0.001) and only 1.4% to Disease (F = 6.89, p = 0.001). More than half of the apparent unadjusted disease effect (3.0% in §7.6) was therefore cohort confounding rather than genuine disease signal. The Disease effect remains real and significant after adjustment, but its magnitude is approximately a fifth of the cohort effect — quantitatively justifying either covariate adjustment or, as we adopt here, structural filtering to a single case-control cohort.
+
+## 7.8 betadisper — Project
+
+A significant PERMANOVA could in principle reflect different dispersions rather than different centroids. We check that the project effect is a centroid shift:
+
+```{r betadisper-project}
+disp_project <- betadisper(bray_full, sample_df_full$Project.ID)
+anova(disp_project)
+```
+betadisper on Project.ID showed significantly heterogeneous dispersions (F = 3.76, p = 0.024), indicating that part of the project effect reflects unequal within-cohort variability — plausibly attributable to PRJEB1786 spanning seven European countries internally. However, the dispersion F is approximately 8× smaller than the PERMANOVA F (31.73), meaning centroid differences remain the dominant component of the project effect. Both interpretations — centroid shift and dispersion difference — represent cohort confounding that the filtering decision addresses.
+
+
+# 8. Cohort effects on alpha diversity
+
+The cohort effect is not only multivariate. Within-sample diversity also differs by project.
+
+## 8.1 Compute Shannon on full data
+
+```{r alpha-full}
+shannon_full <- estimate_richness(ps_raw, measures = "Shannon") |>
+  rownames_to_column("sample_id")
+
+meta_full <- sample_data(ps_raw) |>
+  data.frame() |>
+  rownames_to_column("sample_id")
+
+alpha_full <- inner_join(shannon_full, meta_full, by = "sample_id")
+head(alpha_full)
+```
+
+## 8.2 Shannon by Project — Kruskal-Wallis and visualisation
+
+```{r kruskal-project, fig.width=8, fig.height=4}
+kruskal.test(Shannon ~ Project.ID, data = alpha_full)
+
+ggplot(alpha_full, aes(x = Project.ID, y = Shannon, fill = Project.ID)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 0.8) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  labs(title = "Shannon diversity differs by project",
+       x = NULL, y = "Shannon")
+```
+
+Shannon diversity differs dramatically across the three projects (Kruskal-Wallis χ² = 95.38, df = 2, p < 2.2 × 10⁻¹⁶). Median Shannon was highest in the European cohort (PRJEB1786, ~1.95), intermediate in the US cohort (PRJNA299502, ~1.78), and lowest in the Chinese cohort (PRJNA422434, ~1.55). Crucially, because all healthy controls are drawn from PRJNA422434 (the lowest-diversity population), any unadjusted T2D vs Healthy comparison on the full dataset would compare a cohort-mixed case group against a Chinese-only control group — guaranteeing a T2D > Healthy diversity pattern as a cohort artefact rather than a disease signal. This finding is the alpha-diversity analogue of the beta-diversity cohort effect quantified in §7, and provides additional structural justification for restricting analyses to PRJNA422434.
+
+## 8.3 Pairwise comparisons across projects
+
+```{r pairwise-project}
+pairwise.wilcox.test(alpha_full$Shannon,
+                     alpha_full$Project.ID,
+                     p.adjust.method = "BH")
+```
+
+"All three pairwise project comparisons are significant after BH correction (Europe vs USA: p = 0.0026; Europe vs China: p < 2 × 10⁻¹⁶; USA vs China: p = 0.00012), with median Shannon decreasing Europe > USA > China. The cohort effect on alpha diversity is therefore pervasive across all project pairs, not localised to any single outlier study. This rules out partial-pooling strategies as alternatives to single-cohort restriction — any combination of two or more projects would re-introduce a significant geographic confound, and only restriction to PRJNA422434 yields a homogeneous within-cohort comparison."
+
+## 8.4 Pairwise effect sizes
+
+```{r effects-project}
+project_pairs <- combn(unique(alpha_full$Project.ID), 2, simplify = FALSE)
+
+project_effects <- tibble()
+for (pair in project_pairs) {
+  sub <- alpha_full |> filter(Project.ID %in% pair)
+  rb <- rank_biserial(Shannon ~ Project.ID, data = sub)
+  project_effects <- bind_rows(project_effects, tibble(
+    pair     = paste(pair, collapse = " vs "),
+    r        = round(rb$r_rank_biserial, 3),
+    CI_lower = round(rb$CI_low, 3),
+    CI_upper = round(rb$CI_high, 3)
+  ))
+}
+project_effects
+```
+"Pairwise rank-biserial effect sizes confirm that cohort differences in Shannon diversity are very large in magnitude. The Europe-vs-China comparison (r = 0.774, 95% CI [0.699, 0.833]) is roughly four times larger than the within-cohort disease effect previously measured in PRJNA422434 (r = 0.19). All three pairwise cohort effects exceed the disease effect in magnitude, providing the quantitative basis for restricting analyses to a single project: in any pooled comparison, the cohort signal would dominate any disease signal of typical microbiome-study magnitude."
+
+
+
+
+The point: substantial Shannon differences between projects, with effect sizes that in some cases exceed the disease effect within the clean cohort. The unfiltered "disease effect" on Shannon is therefore not separable from cohort.
+
+# 9. Disease effect, adjusted for cohort
+
+What is the disease effect on Shannon once we control for project?
+
+```{r lm-shannon-adjusted}
+mod_unadjusted <- lm(Shannon ~ Disease.MESH.ID,
+                     data = alpha_full)
+mod_adjusted   <- lm(Shannon ~ Disease.MESH.ID + Project.ID,
+                     data = alpha_full)
+
+summary(mod_unadjusted)$coefficients
+summary(mod_adjusted)$coefficients
+```
+"A linear model on the unfiltered Shannon data showed that Healthy samples had 0.190 Shannon units lower diversity than T2D samples (β = −0.190, p = 1.96 × 10⁻⁹). After adjusting for Project.ID, this disease coefficient shrank by 47% to β = −0.101 (p = 0.0013), while the China-vs-Europe project coefficient (β = −0.353, p = 7.3 × 10⁻¹⁴) was 3.5 times larger than the adjusted disease coefficient. The unadjusted disease estimate therefore packages together genuine within-population disease variation and the cohort-mixing artefact of comparing a Chinese-only Healthy group against a partly non-Chinese T2D group. The adjusted estimate is the unconfounded disease effect; restricting analyses to PRJNA422434 yields the same comparison without requiring covariate adjustment in every downstream test."
+
+
+The Disease coefficient in the adjusted model is the disease effect on Shannon after partialling out cohort. Comparison with the unadjusted coefficient shows how much of the apparent disease effect was actually cohort-driven.
+
+# 10. Biological interpretation of the cohort effect
+
+The numbers from §7-§9 show that `Project.ID` (and equivalently `Country`) is the largest single driver of community variation in this dataset. Several lines of published evidence explain why this is expected biology, not an analytical artefact:
+
+- **Diet** is the dominant short-to-medium-term driver of gut community composition. Different countries differ systematically in fibre intake, fermented-food consumption, animal vs plant protein, food additives. Each has measurable microbiome consequences.
+- **Lifestyle and host genetics** — urbanisation, antibiotic-use patterns, mode of birth, breastfeeding duration, host genetic background — vary across populations and all affect microbiome composition.
+- **Cross-country surveys** (Yatsunenko et al. 2012; the Human Microbiome Project; American Gut Project) consistently report that population-of-origin explains a substantial fraction of microbiome variance — often comparable to or greater than the variance explained by disease.
+
+Together, this means that the observed project effect is real biology — a real difference between Chinese, Swedish, and other contributing populations. It is also irrelevant biology *for the disease question we want to answer*. We do not want to know how the Chinese microbiome differs from the Scandinavian microbiome; we want to know how the T2D gut microbiome differs from the healthy gut microbiome.
+
+# 11. What filtering achieves biologically
+
+Restricting to PRJNA422434 sacrifices ~17% of the sample size (73 of 432 samples) to gain four substantial benefits, each supported by the analyses above:
+
+**1. The disease signal is no longer confounded with population-of-origin.** Within a single Chinese cohort, participants share roughly the same dietary patterns, urbanisation profile, antibiotic-use environment, and host-genetic background. A taxon found T2D-associated in this comparison is associated with T2D *within the Chinese population* — a defensible biological claim. The same taxon in the full-data comparison could plausibly reflect a Chinese-vs-Scandinavian signal, given the magnitude of the project effect in §7.
+
+**2. Reduced technical noise.** Samples within one project share DNA extraction protocol, sequencing platform, and bioinformatic pipeline. The dispersion test in §7.8 shows that across-project dispersion is itself measurable; filtering removes that contribution.
+
+**3. Taxa with meaningful disease-related variance, rather than population-marker variance.** Many low-abundance taxa appear in only one geographic population. In the full dataset, those taxa generate "signals" that are really population markers. Within one population, the taxa with meaningful variance are those that genuinely fluctuate with disease state.
+
+**4. Cleaner downstream interpretation.** When we move to differential abundance and map T2D-associated taxa to known biology (SCFA producers, mucin degraders, bile-acid modifiers), the interpretation is unambiguous: these are taxa whose abundance differs in Chinese T2D patients compared to Chinese healthy controls. In the full dataset, every interpretive sentence would need to qualify whether the finding is disease- or population-specific.
+
+# 12. What we lose, and why it is acceptable
+
+**Generalisability.** Findings are formally specific to the Chinese gut microbiome. They cannot be claimed to generalise to Scandinavian, North American, or other populations without further validation.
+
+This is a genuine limitation, acceptable for two reasons:
+
+- Even with the full dataset, the controls are exclusively Chinese — so the "Healthy reference" was always going to be Chinese-specific. Filtering does not narrow the implicit population framing; it makes it explicit.
+- The T2D microbiome literature has repeatedly shown that "universal" microbiome signatures fail to replicate across cohorts (Forslund et al. 2015 demonstrated this for T2D in particular). Honest population-specificity is methodologically preferable to a misleading claim of generality.
+
+**Sample size.** N drops from 432 to 359. A 17% reduction. PERMANOVA, Wilcoxon, and differential-abundance methods all retain ample power at n = 359.
+
+# 13. Methodological framing
+
+Restricting to PRJNA422434 is not a result-driven choice. The decision is dictated by:
+
+1. The structure of the dataset — two of three projects are case-only (§5).
+2. The numerical demonstration that cohort dominates the community signal more than disease does (§7.4-§7.7).
+3. The biological knowledge that country-of-origin is a major microbiome driver, confounded with disease in the original design (§10).
+
+All three reasons exist before any downstream analysis is run. The choice is therefore conservative (sacrifices nominal sample size for cleaner interpretation), structural (reflects an unfixable feature of the design), and biological (isolates the comparison we want to make).
+
+# 14. Summary
+
+- 432 samples; three projects; two of three are case-only (§5).
+- The single case-control project (PRJNA422434, n = 359) is the Chinese cohort (§6).
+- PERMANOVA on Project alone yields a substantial R² (§7.4); Project R² far exceeds Disease R² in the adjusted PERMANOVA (§7.7); Shannon diversity differs significantly between projects (§8.2-§8.4).
+- All of these results are quantitative confirmation that cohort dominates the community signal in this dataset.
+- Country is one of the largest known drivers of gut microbiome composition (§10), so the cohort effect documented here is real biology that is irrelevant to the disease question.
+- Restricting to PRJNA422434 isolates a within-population disease comparison, both structurally honest and biologically interpretable (§11).
+- The costs — loss of 17% of samples and loss of cross-population generalisability — are acknowledged (§12).
+- **Conclusion**: filtering is the better choice for the biology we want to characterise, and the rationale rests on demonstrated tests, not assertion.
