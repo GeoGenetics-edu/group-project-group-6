@@ -133,6 +133,25 @@ kruskal_shannon
 ```
 
 
+laver også kruskal med observed richness:
+```{r}
+kruskal_observed <- kruskal.test(
+  Observed ~ Disease.MESH.ID,
+  data = alpha_diversity
+)
+
+kruskal_observed
+
+length(unique(alpha_diversity$Observed))
+
+table(alpha_diversity$Observed)
+
+summary(observed$Observed)
+```
+
+
+
+
 Beta-diversity
 
 ```{r}
@@ -220,7 +239,7 @@ plot_ordination(
   ps_rel,
   ord_bray,
   type = "samples",
-  color = "Project.ID"
+  color = "Disease.MESH.ID"
 )
 ```
 
