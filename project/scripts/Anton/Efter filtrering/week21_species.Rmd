@@ -1,5 +1,5 @@
 ---
-title: "Differential abundance analysis — T2D vs Healthy (Chinese cohort)"
+title: "Differential abundance analysis — Species level (Chinese cohort)"
 author: "Anton"
 date: "`r Sys.Date()`"
 output:
@@ -13,16 +13,14 @@ knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 ```
 
-This Rmd mirrors the structure of the Week 21 practical (Antton Alberdi's reference Rmd), adapted to the T2D vs Healthy comparison within the filtered Chinese cohort (`Project.ID == "PRJNA422434"`).
+Species-level companion to `week21.Rmd`. Same filtered cohort (`Project.ID == "PRJNA422434"`), same methods, same direction convention (positive = T2D-enriched).
 
-| Teacher's variable | Used here |
-|---|---|
-| `body_site == "gut"` | (already filtered to Chinese cohort; no body-site variable) |
-| `age` (adult, infant) | `Disease.MESH.ID` (D003924 = T2D, D006262 = Healthy) |
-| `status` (healthy, sick) | `Sex` (Female, Male) — used as adjustment covariate |
-| `genus`, `species` (lowercase) | `Genus`, `Species` (uppercase) — note: the `Species` column in this dataset actually contains genus names (column-shift quirk) |
+The diagnostic chunks (zero-inflation, right-skew, Q-Q) are skipped here because they were established at genus level — species-level data inherits and amplifies all three problems by sparsity. Method choice is therefore already justified; the focus of this Rmd is on whether the species-level results agree with or refine the genus-level headline.
 
-Direction convention throughout: **positive** estimate = T2D-enriched, **negative** estimate = T2D-depleted (= Healthy-enriched).
+| Resolution | n taxa | n samples |
+|---|---|---|
+| Genus (week21.Rmd) | 58 | 359 |
+| Species (this file) | ~173 | 359 |
 
 ## Loading of required libraries
 
@@ -39,42 +37,28 @@ library(broom)
 library(microbiome)
 ```
 
-> *Reference: same library stack as Alberdi's W21 reference Rmd §1 ("Loading of required libraries"). Subset is taught in W20-01 / W20-02 / W20-03.*
-
-## Load and inspect the data
+## Load and filter species data
 
 ```{r load-data}
-load("project/data/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+load("project/data/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
 ps <- subset_samples(pylsq, Project.ID == "PRJNA422434")
 rm(pylsq)
 
 ps
-sample_variables(ps)
-rank_names(ps)
 table(sample_data(ps)$Disease.MESH.ID)
+ntaxa(ps)
 ```
 
-Expected: 187 T2D + 172 Healthy = 359 samples, all from PRJNA422434.
+Expected: 187 T2D + 172 Healthy = 359 samples, ~173 species.
 
-## Visualise community composition
+## Build relative-abundance long table
 
-```{r composition-bar, fig.width=11, fig.height=5}
-ps_rel  <- transform_sample_counts(ps, function(x) x / sum(x))
-otu_rel <- as(otu_table(ps_rel), "matrix") %>% t() %>% as.data.frame()
+```{r build-rel}
+ps_rel   <- transform_sample_counts(ps, function(x) x / sum(x))
+otu_rel  <- as(otu_table(ps_rel), "matrix") %>% t() %>% as.data.frame()
 meta_rel <- data.frame(sample_data(ps_rel))
 tax_rel  <- as(tax_table(ps_rel), "matrix") %>% as.data.frame()
-
-plot_bar(ps_rel, fill = "Species") +
-  geom_bar(aes(fill = Species), stat = "identity", colour = NA) +
-  facet_nested(~ Sex + Disease.MESH.ID, scales = "free_x") +
-  theme_bw() +
-  theme(axis.text.x = element_blank(),
-        legend.position = "none") +
-  labs(title = "Genus-level composition by Sex × Disease",
-       fill = "Genus")
 ```
-
-The data is already at genus level (58 taxa) — no `tax_glom` needed. Legend hidden because 58 categories are unreadable.
 
 ```{r build-dat-rel}
 dat_rel <- otu_rel %>%
@@ -84,96 +68,55 @@ dat_rel <- otu_rel %>%
   left_join(tax_rel  %>% rownames_to_column("taxon"),     by = "taxon")
 ```
 
-# Univariate statistics
+## Prevalence filter
 
-## Explore individual taxa
+At species level a fraction of the taxa in the reference catalogue are not detected in this cohort at all — relative abundance is zero in every sample of both disease groups. Wilcoxon (and every other rank-based or variance-based test) returns `NaN` for such taxa because there are no rank or variance differences to compute when all values are tied at zero. This is the correct mathematical output, not a bug, but the resulting NaN rows clutter the output tables and inflate the multiple-testing burden without contributing biological signal.
 
-```{r single-taxon, fig.width=10, fig.height=4}
-one_taxon <- unique(dat_rel$taxon)[3]
-# one_taxon <- unique(dat_rel$taxon)[5]
-# one_taxon <- unique(dat_rel$taxon)[20]
+We therefore restrict per-taxon analyses to taxa present in at least 10 % of samples in at least one disease group.
 
-# Comparison between disease groups
-dat_rel %>%
-  filter(taxon == one_taxon) %>%
-  ggplot(aes(x = Disease.MESH.ID, y = rel_abund, fill = Disease.MESH.ID)) +
-    geom_boxplot(outlier.shape = NA) +
-    geom_jitter(width = 0.15, alpha = 0.4) +
-    theme_bw() +
-    labs(title = paste("Taxon", one_taxon, "by disease"))
-
-# Comparison between sexes within T2D
-dat_rel %>%
-  filter(taxon == one_taxon, Disease.MESH.ID == "D003924") %>%
-  ggplot(aes(x = Sex, y = rel_abund, fill = Sex)) +
-    geom_boxplot(outlier.shape = NA) +
-    geom_jitter(width = 0.15, alpha = 0.4) +
-    theme_bw() +
-    labs(title = paste("Taxon", one_taxon, "by sex (T2D only)"))
-```
-
-## Diagnose the data before testing
-
-### Zero-inflation
-
-```{r zero-inflation, fig.width=10, fig.height=4}
-dat_rel %>%
+```{r prevalence-filter}
+prevalent_taxa <- dat_rel %>%
   group_by(taxon, Disease.MESH.ID) %>%
-  summarise(prop_zero = mean(rel_abund == 0), .groups = "drop") %>%
-  ggplot(aes(x = prop_zero, fill = Disease.MESH.ID)) +
-    geom_histogram(binwidth = 0.05, color = "white", alpha = 0.7) +
-    scale_fill_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
-    facet_wrap(~ Disease.MESH.ID) +
-    labs(x = "Proportion of samples where relative abundance = 0",
-         y = "Number of taxa",
-         title = "Zero-inflation by disease group") +
-    theme_bw() +
-    theme(legend.position = "none")
-```
-
-### Right skew on a sample of mid-prevalence taxa
-
-```{r right-skew, fig.width=10, fig.height=6}
-set.seed(42)
-example_taxa <- dat_rel %>%
-  filter(Disease.MESH.ID == "D003924") %>%
-  group_by(taxon, Genus, Species) %>%
-  summarise(prop_nonzero = mean(rel_abund > 0), .groups = "drop") %>%
-  filter(prop_nonzero > 0.4, prop_nonzero < 0.9) %>%
-  slice_sample(n = 6) %>%
+  summarise(prevalence = mean(rel_abund > 0), .groups = "drop") %>%
+  group_by(taxon) %>%
+  summarise(max_prev = max(prevalence), .groups = "drop") %>%
+  filter(max_prev >= 0.10) %>%
   pull(taxon)
 
-dat_rel %>%
-  filter(Disease.MESH.ID == "D003924",
-         taxon %in% example_taxa,
-         rel_abund > 0) %>%
-  mutate(label = Species) %>%
-  ggplot(aes(x = rel_abund)) +
-    geom_histogram(bins = 20, fill = "steelblue", color = "white") +
-    facet_wrap(~ label, scales = "free") +
-    labs(x = "Relative abundance (non-zero values only)",
-         y = "Count",
-         title = "Right-skewed distributions in selected genera (T2D)") +
-    theme_bw()
+n_before <- length(unique(dat_rel$taxon))
+n_after  <- length(prevalent_taxa)
+
+tibble(
+  taxa_before_filter = n_before,
+  taxa_after_filter  = n_after,
+  taxa_removed       = n_before - n_after
+)
+
+dat_rel <- dat_rel %>% filter(taxon %in% prevalent_taxa)
 ```
 
-### Q-Q plots
+All downstream per-taxon tests (Wilcoxon, GLM, CLR, RDA loadings) inherit this filter through `dat_rel` and the parallel `dat_clr` (filtered in the same way after CLR construction).
 
-```{r qq-plots, fig.width=10, fig.height=6}
-dat_rel %>%
-  filter(Disease.MESH.ID == "D003924", taxon %in% example_taxa) %>%
-  mutate(label = Species) %>%
-  ggplot(aes(sample = rel_abund)) +
-    stat_qq(size = 0.8, alpha = 0.6) +
-    stat_qq_line(color = "red", linetype = "dashed") +
-    facet_wrap(~ label, scales = "free") +
-    labs(x = "Theoretical quantiles (normal)",
-         y = "Sample quantiles",
-         title = "Q–Q plots: departures from normality in selected genera (T2D)") +
-    theme_bw()
+## Community composition (top 20 species)
+
+The full species panel is too wide for a stacked bar plot. We restrict to the 20 most abundant species and group the rest as "Other."
+
+```{r composition-bar, fig.width=11, fig.height=5}
+top_n_species <- 20
+top_species <- names(sort(taxa_sums(ps_rel), decreasing = TRUE)[1:top_n_species])
+ps_top      <- prune_taxa(top_species, ps_rel)
+
+plot_bar(ps_top, fill = "Species") +
+  geom_bar(aes(fill = Species), stat = "identity", colour = NA) +
+  facet_nested(~ Sex + Disease.MESH.ID, scales = "free_x") +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        legend.text = element_text(size = 7)) +
+  labs(title = "Top 20 species composition by Sex × Disease",
+       fill = "Species")
 ```
 
-Zero-inflation, right skew and Q-Q curvature together justify rank-based or compositional methods over raw t-tests.
+# Univariate statistics
 
 ## Wilcoxon rank-sum test
 
@@ -191,8 +134,6 @@ wilcox_results <- dat_rel %>%
 
 head(wilcox_results, 10)
 ```
-
-`log2_fc > 0` → T2D-enriched. `log2_fc < 0` → T2D-depleted.
 
 ### Top T2D-depleted (Wilcoxon)
 
@@ -265,34 +206,13 @@ wilcox_results %>%
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     labs(x = "log2 fold change (T2D vs Healthy)",
          y = "-log10(q-value)", color = NULL,
-         title = "Wilcoxon: disease effect on relative abundance") +
+         title = "Wilcoxon: species-level disease effect") +
     theme_bw()
 ```
 
-### Bar chart of top Wilcoxon hits
+## GLM (unadjusted)
 
-```{r wilcox-bar, fig.width=8, fig.height=6}
-bind_rows(
-  wilcox_results %>% filter(q_value < 0.05) %>% arrange(log2_fc)  %>% head(10),
-  wilcox_results %>% filter(q_value < 0.05) %>% arrange(-log2_fc) %>% head(10)
-) %>%
-  distinct() %>%
-  mutate(
-    label = Species,
-    direction = ifelse(log2_fc > 0, "T2D-enriched", "T2D-depleted")
-  ) %>%
-  ggplot(aes(x = reorder(label, -q_value), y = log2_fc, fill = direction)) +
-    geom_col() +
-    coord_flip() +
-    scale_fill_manual(values = c("T2D-enriched" = "#E74C3C", "T2D-depleted" = "#3498DB")) +
-    labs(x = NULL, y = "log2 fold change (T2D vs Healthy)", fill = NULL,
-         title = "Top differentially abundant taxa (Wilcoxon)") +
-    theme_bw()
-```
-
-## Disease effect using log-transformed linear models
-
-```{r glm-results}
+```{r glm-unadj-results}
 glm_disease_results <- dat_rel %>%
   mutate(Disease.MESH.ID = factor(Disease.MESH.ID, levels = c("D006262", "D003924"))) %>%
   group_by(taxon, Genus, Species) %>%
@@ -309,63 +229,7 @@ glm_disease_results <- dat_rel %>%
   )
 ```
 
-Positive estimate = T2D-enriched on the log10 scale.
-
-### Top T2D-depleted (GLM)
-
-```{r glm-depleted}
-glm_T2D_depleted <- glm_disease_results %>%
-  select(taxon, Genus, Species, estimate, fold_change_T2D_vs_Healthy,
-         std.error, statistic, p.value, q_value) %>%
-  arrange(fold_change_T2D_vs_Healthy) %>%
-  head(10)
-
-glm_T2D_depleted
-```
-
-```{r glm-depleted-plot, fig.width=6, fig.height=4}
-top_taxon <- glm_T2D_depleted %>% slice(1) %>% pull(taxon)
-top_label <- glm_T2D_depleted %>% slice(1) %>% pull(Species)
-
-dat_rel %>%
-  filter(taxon == top_taxon) %>%
-  ggplot(aes(x = Disease.MESH.ID, y = rel_abund, fill = Disease.MESH.ID)) +
-    geom_boxplot(outlier.shape = NA) +
-    geom_jitter(width = 0.15, alpha = 0.4) +
-    scale_fill_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
-    theme_bw() +
-    labs(title = paste("Top T2D-depleted (GLM):", top_label))
-```
-
-### Top T2D-enriched (GLM)
-
-```{r glm-enriched}
-glm_T2D_enriched <- glm_disease_results %>%
-  select(taxon, Genus, Species, estimate, fold_change_T2D_vs_Healthy,
-         std.error, statistic, p.value, q_value) %>%
-  arrange(-fold_change_T2D_vs_Healthy) %>%
-  head(10)
-
-glm_T2D_enriched
-```
-
-```{r glm-enriched-plot, fig.width=6, fig.height=4}
-top_taxon <- glm_T2D_enriched %>% slice(1) %>% pull(taxon)
-top_label <- glm_T2D_enriched %>% slice(1) %>% pull(Species)
-
-dat_rel %>%
-  filter(taxon == top_taxon) %>%
-  ggplot(aes(x = Disease.MESH.ID, y = rel_abund, fill = Disease.MESH.ID)) +
-    geom_boxplot(outlier.shape = NA) +
-    geom_jitter(width = 0.15, alpha = 0.4) +
-    scale_fill_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
-    theme_bw() +
-    labs(title = paste("Top T2D-enriched (GLM):", top_label))
-```
-
-### Volcano plot — GLM (unadjusted)
-
-```{r glm-volcano, fig.width=8, fig.height=5}
+```{r glm-unadj-volcano, fig.width=8, fig.height=5}
 glm_disease_results %>%
   mutate(
     neg_log10_q = -log10(q_value),
@@ -384,34 +248,11 @@ glm_disease_results %>%
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     labs(x = "GLM estimate (log10 RA, T2D vs Healthy)",
          y = "-log10(q-value)", color = NULL,
-         title = "GLM: disease effect on log10 relative abundance") +
-    theme_bw()
-```
-
-### Bar chart — GLM top hits
-
-```{r glm-bar, fig.width=8, fig.height=6}
-bind_rows(
-  glm_disease_results %>% filter(q_value < 0.05) %>% arrange(estimate)  %>% head(10),
-  glm_disease_results %>% filter(q_value < 0.05) %>% arrange(-estimate) %>% head(10)
-) %>%
-  distinct() %>%
-  mutate(
-    label = Species,
-    direction = ifelse(estimate > 0, "T2D-enriched", "T2D-depleted")
-  ) %>%
-  ggplot(aes(x = reorder(label, -q_value), y = estimate, fill = direction)) +
-    geom_col() +
-    coord_flip() +
-    scale_fill_manual(values = c("T2D-enriched" = "#E74C3C", "T2D-depleted" = "#3498DB")) +
-    labs(x = NULL, y = "GLM estimate (log10 RA)", fill = NULL,
-         title = "Top differentially abundant taxa (GLM)") +
+         title = "GLM unadjusted: species-level disease effect") +
     theme_bw()
 ```
 
 ## Primary adjusted model — Sex + Host.age (n = 359)
-
-Sex and Host.age have no missing values in this cohort, so both are added to the primary model without losing samples. Recent.antibiotics.use is monomorphic in this cohort (all participants screened out at enrolment), so it is not included. BMI is missing for 58% of samples and is handled as a sensitivity analysis later.
 
 ```{r glm-adj-results}
 glm_disease_adjusted_sex_results <- dat_rel %>%
@@ -434,7 +275,7 @@ glm_disease_adjusted_sex_results <- dat_rel %>%
   )
 ```
 
-### Top T2D-depleted (GLM adjusted for Sex + Age)
+### Top T2D-depleted (GLM adj. Sex + Age)
 
 ```{r glm-adj-depleted}
 glm_adj_T2D_depleted <- glm_disease_adjusted_sex_results %>%
@@ -446,21 +287,7 @@ glm_adj_T2D_depleted <- glm_disease_adjusted_sex_results %>%
 glm_adj_T2D_depleted
 ```
 
-```{r glm-adj-depleted-plot, fig.width=6, fig.height=4}
-top_taxon <- glm_adj_T2D_depleted %>% slice(1) %>% pull(taxon)
-top_label <- glm_adj_T2D_depleted %>% slice(1) %>% pull(Species)
-
-dat_rel %>%
-  filter(taxon == top_taxon) %>%
-  ggplot(aes(x = Disease.MESH.ID, y = rel_abund, fill = Disease.MESH.ID)) +
-    geom_boxplot(outlier.shape = NA) +
-    geom_jitter(width = 0.15, alpha = 0.4) +
-    scale_fill_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
-    theme_bw() +
-    labs(title = paste("Top T2D-depleted (GLM adj. Sex+Age):", top_label))
-```
-
-### Top T2D-enriched (GLM adjusted for Sex + Age)
+### Top T2D-enriched (GLM adj. Sex + Age)
 
 ```{r glm-adj-enriched}
 glm_adj_T2D_enriched <- glm_disease_adjusted_sex_results %>%
@@ -472,21 +299,7 @@ glm_adj_T2D_enriched <- glm_disease_adjusted_sex_results %>%
 glm_adj_T2D_enriched
 ```
 
-```{r glm-adj-enriched-plot, fig.width=6, fig.height=4}
-top_taxon <- glm_adj_T2D_enriched %>% slice(1) %>% pull(taxon)
-top_label <- glm_adj_T2D_enriched %>% slice(1) %>% pull(Species)
-
-dat_rel %>%
-  filter(taxon == top_taxon) %>%
-  ggplot(aes(x = Disease.MESH.ID, y = rel_abund, fill = Disease.MESH.ID)) +
-    geom_boxplot(outlier.shape = NA) +
-    geom_jitter(width = 0.15, alpha = 0.4) +
-    scale_fill_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
-    theme_bw() +
-    labs(title = paste("Top T2D-enriched (GLM adj. Sex+Age):", top_label))
-```
-
-### Volcano plot — GLM adjusted for Sex + Age
+### Volcano plot — GLM adjusted
 
 ```{r glm-adj-volcano, fig.width=8, fig.height=5}
 glm_disease_adjusted_sex_results %>%
@@ -507,28 +320,7 @@ glm_disease_adjusted_sex_results %>%
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     labs(x = "GLM estimate (log10 RA, T2D vs Healthy)",
          y = "-log10(q-value)", color = NULL,
-         title = "GLM adjusted for Sex + Age: disease effect") +
-    theme_bw()
-```
-
-### Bar chart — GLM adjusted (Sex + Age) top hits
-
-```{r glm-adj-bar, fig.width=8, fig.height=6}
-bind_rows(
-  glm_disease_adjusted_sex_results %>% filter(q_value < 0.05) %>% arrange(estimate)  %>% head(10),
-  glm_disease_adjusted_sex_results %>% filter(q_value < 0.05) %>% arrange(-estimate) %>% head(10)
-) %>%
-  distinct() %>%
-  mutate(
-    label = Species,
-    direction = ifelse(estimate > 0, "T2D-enriched", "T2D-depleted")
-  ) %>%
-  ggplot(aes(x = reorder(label, -q_value), y = estimate, fill = direction)) +
-    geom_col() +
-    coord_flip() +
-    scale_fill_manual(values = c("T2D-enriched" = "#E74C3C", "T2D-depleted" = "#3498DB")) +
-    labs(x = NULL, y = "GLM estimate (log10 RA, adjusted)", fill = NULL,
-         title = "Top differentially abundant taxa (GLM adjusted for Sex + Age)") +
+         title = "GLM adjusted for Sex + Age: species-level disease effect") +
     theme_bw()
 ```
 
@@ -549,7 +341,8 @@ dat_clr <- otu_clr %>%
   rownames_to_column("sample_id") %>%
   pivot_longer(-sample_id, names_to = "taxon", values_to = "clr") %>%
   left_join(meta_clr %>% rownames_to_column("sample_id"), by = "sample_id") %>%
-  left_join(tax_clr  %>% rownames_to_column("taxon"),     by = "taxon")
+  left_join(tax_clr  %>% rownames_to_column("taxon"),     by = "taxon") %>%
+  filter(taxon %in% prevalent_taxa)   # apply the same prevalence filter as dat_rel
 ```
 
 ```{r clr-results}
@@ -568,8 +361,6 @@ clr_disease_adjusted_sex_results <- dat_clr %>%
   filter(term == "Disease.MESH.IDD003924") %>%
   mutate(q_value = p.adjust(p.value, method = "BH"))
 ```
-
-Positive CLR estimate = T2D-enriched relative to the community geometric mean.
 
 ### Top T2D-depleted (CLR)
 
@@ -644,34 +435,11 @@ clr_disease_adjusted_sex_results %>%
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     labs(x = "CLR estimate (T2D vs Healthy)",
          y = "-log10(q-value)", color = NULL,
-         title = "Compositional (CLR) analysis: disease effect") +
-    theme_bw()
-```
-
-### Bar chart — CLR top hits
-
-```{r clr-bar, fig.width=8, fig.height=6}
-bind_rows(
-  clr_disease_adjusted_sex_results %>% filter(q_value < 0.05) %>% arrange(estimate)  %>% head(10),
-  clr_disease_adjusted_sex_results %>% filter(q_value < 0.05) %>% arrange(-estimate) %>% head(10)
-) %>%
-  distinct() %>%
-  mutate(
-    label = Species,
-    direction = ifelse(estimate > 0, "T2D-enriched", "T2D-depleted")
-  ) %>%
-  ggplot(aes(x = reorder(label, -q_value), y = estimate, fill = direction)) +
-    geom_col() +
-    coord_flip() +
-    scale_fill_manual(values = c("T2D-enriched" = "#E74C3C", "T2D-depleted" = "#3498DB")) +
-    labs(x = NULL, y = "CLR estimate (T2D vs Healthy)", fill = NULL,
-         title = "Top differentially abundant taxa (CLR)") +
+         title = "Compositional (CLR) analysis: species-level disease effect") +
     theme_bw()
 ```
 
 ## Sensitivity analysis — adding BMI (n = 151)
-
-BMI is missing for 58% of the cohort (208 of 359 samples). Including it in the primary model would drop more than half the data and risk missing-not-at-random bias. We therefore run a sensitivity analysis restricted to the 151 samples with complete BMI: if the disease effect estimates broadly agree with the primary model, the BMI confound is unlikely to be driving the findings; if they disagree substantially, BMI-driven confounding must be discussed explicitly in the report.
 
 ```{r covariate-availability}
 meta_check <- data.frame(sample_data(ps))
@@ -705,7 +473,6 @@ glm_disease_sensitivity_BMI <- dat_rel %>%
     fold_change_T2D_vs_Healthy_BMI = 10^estimate
   )
 
-# Top T2D-depleted with BMI adjustment
 glm_disease_sensitivity_BMI %>%
   select(taxon, Genus, Species, estimate, fold_change_T2D_vs_Healthy_BMI,
          std.error, statistic, p.value, q_value) %>%
@@ -752,9 +519,9 @@ clr_disease_adjusted_sex_results %>%
   mutate(
     category = case_when(
       primary_q < 0.05 & BMI_q < 0.05 ~ "Significant in both",
-      primary_q < 0.05               ~ "Primary only",
-      BMI_q < 0.05                   ~ "BMI-sensitivity only",
-      TRUE                           ~ "Neither"
+      primary_q < 0.05                ~ "Primary only",
+      BMI_q < 0.05                    ~ "BMI-sensitivity only",
+      TRUE                            ~ "Neither"
     )
   ) %>%
   ggplot(aes(x = primary_estimate, y = BMI_estimate, color = category)) +
@@ -763,19 +530,17 @@ clr_disease_adjusted_sex_results %>%
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey80") +
     geom_point(alpha = 0.65, size = 2) +
     scale_color_manual(values = c(
-      "Significant in both"   = "#2E8B57",
-      "Primary only"          = "#E67E22",
-      "BMI-sensitivity only"  = "#3498DB",
-      "Neither"               = "grey70"
+      "Significant in both"  = "#2E8B57",
+      "Primary only"         = "#E67E22",
+      "BMI-sensitivity only" = "#3498DB",
+      "Neither"              = "grey70"
     )) +
     labs(x = "Primary CLR estimate (Sex + Age, n = 359)",
          y = "BMI-sensitivity CLR estimate (Sex + Age + BMI, n = 151)",
          color = NULL,
-         title = "Are disease estimates robust to BMI adjustment?") +
+         title = "Species-level: are disease estimates robust to BMI adjustment?") +
     theme_bw()
 ```
-
-Points near the dashed identity line are robust to BMI adjustment. Points well off the line are taxa whose apparent disease effect partly reflects BMI.
 
 ## Compare differential abundance methods
 
@@ -826,7 +591,7 @@ sig_summary <- tibble(
 sig_summary
 ```
 
-### Taxa significant in all four methods
+### Taxa significant in all four primary methods
 
 ```{r all-methods-sig}
 all_methods_sig <- comparison_results %>%
@@ -835,34 +600,6 @@ all_methods_sig <- comparison_results %>%
   arrange(wilcox_q)
 
 all_methods_sig
-```
-
-### GLM unadjusted vs adjusted for Sex
-
-```{r glm-vs-glm-adj, fig.width=6, fig.height=5}
-comparison_results %>%
-  ggplot(aes(x = glm_estimate, y = glm_adj_estimate)) +
-    geom_point(alpha = 0.5) +
-    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
-    labs(x = "GLM estimate (unadjusted)",
-         y = "GLM estimate (adjusted for Sex)",
-         title = "Effect of adjusting for Sex") +
-    theme_bw()
-```
-
-### GLM adjusted vs CLR
-
-```{r glm-adj-vs-clr, fig.width=6, fig.height=5}
-comparison_results %>%
-  ggplot(aes(x = glm_adj_estimate, y = clr_estimate)) +
-    geom_point(alpha = 0.5) +
-    geom_smooth(method = "lm", se = FALSE, color = "blue") +
-    geom_hline(yintercept = 0, linetype = "dashed") +
-    geom_vline(xintercept = 0, linetype = "dashed") +
-    labs(x = "GLM estimate (adjusted, log10 RA)",
-         y = "CLR estimate (adjusted)",
-         title = "GLM vs compositional (CLR) effect sizes") +
-    theme_bw()
 ```
 
 ### Concordance across methods
@@ -881,14 +618,14 @@ comparison_results %>%
   ggplot(aes(x = factor(n_methods_significant), y = n)) +
     geom_col(fill = "steelblue") +
     labs(x = "Number of methods detecting significance (q < 0.05)",
-         y = "Number of taxa",
-         title = "Concordance of significance across methods") +
+         y = "Number of species",
+         title = "Concordance of significance across methods (species level)") +
     theme_bw()
 ```
 
 ### Significance × direction heatmap
 
-```{r heatmap, fig.width=8, fig.height=8}
+```{r heatmap, fig.width=8, fig.height=10}
 heatmap_data <- comparison_results %>%
   filter(wilcox_q < 0.05 | glm_q < 0.05 | glm_adj_q < 0.05 | clr_q < 0.05) %>%
   mutate(label = Species) %>%
@@ -929,45 +666,16 @@ heatmap_data %>%
       breaks = c(-10, -5, 0, 5, 10),
       labels = c("-10\n(T2D-depleted)", "-5", "0", "5", "10\n(T2D-enriched)")
     ) +
-    labs(x = "Method", y = "Taxon",
-         title = "Significance and direction across methods (* = q < 0.05)",
+    labs(x = "Method", y = "Species",
+         title = "Species-level: significance × direction across methods (* = q < 0.05)",
          subtitle = "Blue = T2D-depleted, Red = T2D-enriched") +
     theme_bw() +
-    theme(axis.text.y = element_text(size = 7))
-```
-
-### Wilcoxon vs CLR — sign agreement
-
-```{r wilcox-vs-clr, fig.width=7, fig.height=5}
-comparison_results %>%
-  mutate(
-    sig_category = case_when(
-      wilcox_q < 0.05 & clr_q < 0.05 ~ "Both significant",
-      wilcox_q < 0.05                ~ "Wilcoxon only",
-      clr_q < 0.05                   ~ "CLR only",
-      TRUE                           ~ "Not significant"
-    )
-  ) %>%
-  ggplot(aes(x = wilcox_log2fc, y = clr_estimate, color = sig_category)) +
-    geom_point(alpha = 0.6, size = 2) +
-    scale_color_manual(values = c(
-      "Both significant" = "#E74C3C",
-      "Wilcoxon only"    = "#E67E22",
-      "CLR only"         = "#3498DB",
-      "Not significant"  = "grey70"
-    )) +
-    geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
-    geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
-    labs(x = "Wilcoxon log2 FC (T2D vs Healthy)",
-         y = "CLR estimate (T2D vs Healthy)",
-         color = NULL,
-         title = "Effect size agreement: Wilcoxon vs CLR") +
-    theme_bw()
+    theme(axis.text.y = element_text(size = 6))
 ```
 
 # Multivariate statistics
 
-## PCA of CLR-transformed profiles
+## PCA of CLR-transformed species profiles
 
 ```{r pca, fig.width=7, fig.height=5}
 clr_mat  <- otu_clr %>% as.matrix()
@@ -989,7 +697,7 @@ pca_scores %>%
     labs(x = paste0("PC1 (", pca_var[1], "%)"),
          y = paste0("PC2 (", pca_var[2], "%)"),
          color = "Disease", shape = "Sex",
-         title = "PCA of CLR-transformed genus profiles") +
+         title = "PCA of CLR-transformed species profiles") +
     theme_bw()
 ```
 
@@ -999,16 +707,10 @@ pca_scores %>%
 rda_disease <- rda(clr_mat ~ Disease.MESH.ID + Sex, data = meta_pca)
 ```
 
-### Permutation tests
-
 ```{r rda-anova}
 anova(rda_disease, permutations = 999)
 anova(rda_disease, by = "term", permutations = 999)
 ```
-
-A significant disease term supports a community-level disease effect after accounting for sex.
-
-### Top RDA1 taxa
 
 ```{r rda-taxa}
 rda_site_scores_raw <- scores(rda_disease, display = "sites")
@@ -1083,11 +785,11 @@ ggplot() +
   labs(x = paste0("RDA1 (", pct1, "% of total variance)"),
        y = paste0("RDA2 (", pct2, "% of total variance)"),
        color = "Disease", shape = "Sex",
-       title = "RDA biplot: gut microbiome constrained by Disease and Sex") +
+       title = "RDA biplot: species-level community constrained by Disease and Sex") +
   theme_bw()
 ```
 
-### Top 20 taxa by RDA1 loading
+### Top 20 species by RDA1 loading
 
 ```{r rda-loadings, fig.width=8, fig.height=6}
 rda_taxa %>%
@@ -1103,7 +805,7 @@ rda_taxa %>%
     scale_fill_manual(values = c("T2D-associated"     = "#E74C3C",
                                  "Healthy-associated" = "#3498DB")) +
     labs(x = NULL, y = "RDA1 loading", fill = NULL,
-         title = "Top 20 taxa by RDA1 loading magnitude") +
+         title = "Top 20 species by RDA1 loading magnitude") +
     theme_bw()
 ```
 
@@ -1140,11 +842,11 @@ rda_clr_comparison %>%
     labs(x = "CLR disease estimate (T2D vs Healthy)",
          y = "RDA1 loading (positive = T2D-associated)",
          color = NULL,
-         title = "RDA loadings vs CLR univariate disease effects") +
+         title = "Species-level: RDA loadings vs CLR univariate disease effects") +
     theme_bw()
 ```
 
-### Top 20 RDA loading taxa with their CLR statistics
+### Top 20 RDA loading species with their CLR statistics
 
 ```{r rda-clr-table}
 rda_clr_comparison %>%
@@ -1153,20 +855,14 @@ rda_clr_comparison %>%
   head(20)
 ```
 
-```{r}
-# Inside one of the Rmds
-meta_check <- data.frame(sample_data(ps))
+# Species-vs-genus comparison guidance
 
-summary(meta_check$BMI)
-summary(meta_check$Host.age)
-table(meta_check$Recent.antibiotics.use, useNA = "ifany")
-table(meta_check$Sex)
+For the report, the most informative comparisons to make when both Rmds have been knit:
 
-# How many samples have complete covariates?
-complete_cases_n <- meta_check %>%
-  filter(!is.na(BMI), !is.na(Host.age), !is.na(Sex), !is.na(Recent.antibiotics.use)) %>%
-  nrow()
+1. **`sig_summary` side by side.** Same six rows in each Rmd. Higher numbers at species level reflect finer resolution; lower numbers can reflect sparsity-driven power loss. Either pattern is interpretable.
 
-complete_cases_n
-```
+2. **The CLR primary heatmap.** The genus-level heatmap shows ~30 rows; the species-level heatmap shows the species *within* those genera. Where a single genus row at genus level becomes multiple species rows at species level, the species version tells you which member is driving the signal — the headline biological finding.
 
+3. **The BMI-sensitivity scatter.** Compare which hits survive BMI adjustment at both levels. Hits surviving at both levels are the most robust candidates for the metabolic story.
+
+4. **The RDA biplot.** Species-level arrows are more specific (named at species rank where possible). Compare arrow direction with the genus-level biplot — if a *Faecalibacterium* arrow points Healthy at genus level, the species-level biplot should show *F. prausnitzii*-specific or *F.* sp.-specific arrows aligned in the same direction. If they don't align, the genus-level signal was diluted by within-genus species heterogeneity — itself a biologically meaningful finding.
