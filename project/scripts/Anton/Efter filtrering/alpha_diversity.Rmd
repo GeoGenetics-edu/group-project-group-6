@@ -16,7 +16,7 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 
 # Purpose
 
-Alpha diversity within the filtered Chinese cohort (`Project.ID == "PRJNA422434"`, 187 T2D + 172 Healthy). All analyses run at both genus and species level. The headline test is Wilcoxon rank-sum; effect size, depth confounding, and covariate adjustment are also reported.
+Alpha diversity within the filtered Chinese cohort (`Project.ID == "PRJNA422434"`, 187 T2D + 172 Healthy). All analyses run at both genus and species level. The headline test is Wilcoxon rank-sum; group medians, depth confounding, and covariate adjustment are also reported.
 
 # 1. Libraries
 
@@ -27,8 +27,9 @@ library(ggplot2)
 library(dplyr)
 library(tibble)
 library(tidyr)
-library(effectsize)
 ```
+
+> *Taught in: W20-02 (`02_statistical_testing_of_alpha_diversity.Rmd`) §1 — phyloseq + tidyverse for alpha-diversity testing; ggplot2 from the W20 diversity practicals.*
 
 # 2. Load and filter data
 
@@ -48,6 +49,8 @@ rm(pylsq)
 ps_genus_clean
 ps_species_clean
 ```
+
+> *Taught in: W20-01/W20-02 — loading the course phyloseq objects; `subset_samples()` is the phyloseq subsetting shown in W20-03 (`03_beta_diversity_and_ordination.Rmd`). Cohort filter (PRJNA422434 only) is project-chosen, rationale in `cohort_rationale.Rmd`.*
 
 # 3. Build a tidy alpha-diversity table at both levels
 
@@ -70,6 +73,8 @@ alpha_all     <- bind_rows(alpha_genus, alpha_species)
 
 head(alpha_all)
 ```
+
+> *Taught in: W20-02 §2 — `estimate_richness()` for Shannon/Simpson/InvSimpson. Joining the richness table to `sample_data()` follows the same practical.*
 
 Note: `Observed` is omitted because the OTU table contains relative abundances rather than integer counts, which is the data structure `Observed`/`Chao1`/`ACE` assume.
 
@@ -105,35 +110,42 @@ wilcox_results <- wilcox_results |>
 wilcox_results
 ```
 
-# 5. Effect sizes (rank-biserial correlation)
+> *Taught in: W20-02 — Wilcoxon rank-sum (`wilcox.test`) / Kruskal-Wallis for two-group alpha-diversity comparison; group medians are the descriptive summary shown alongside the test in the same practical.*
 
-```{r effect-sizes}
-effect_results <- tibble()
+# 5. Group medians and spread (IQR)
+
+The Wilcoxon test above is non-parametric, so the matching descriptive summary is the group median and interquartile range (IQR) rather than a parametric effect size. This describes the size and direction of the difference using the same rank-based logic as the test.
+
+```{r median-iqr}
+median_iqr <- tibble()
 
 for (lvl in levels_to_test) {
   sub <- alpha_all |> filter(level == lvl)
   for (m in metrics_to_test) {
-    rb <- rank_biserial(reformulate("Disease.MESH.ID", m), data = sub)
-    effect_results <- bind_rows(
-      effect_results,
+    t2d <- sub[[m]][sub$Disease.MESH.ID == "D003924"]
+    hc  <- sub[[m]][sub$Disease.MESH.ID == "D006262"]
+    median_iqr <- bind_rows(
+      median_iqr,
       tibble(
-        level    = lvl,
-        metric   = m,
-        r        = rb$r_rank_biserial,
-        CI_lower = rb$CI_low,
-        CI_upper = rb$CI_high
+        level      = lvl,
+        metric     = m,
+        median_T2D = median(t2d),
+        IQR_T2D    = IQR(t2d),
+        median_HC  = median(hc),
+        IQR_HC     = IQR(hc),
+        median_diff = median(t2d) - median(hc)
       )
     )
   }
 }
 
-effect_results <- effect_results |>
-  mutate(across(c(r, CI_lower, CI_upper), \(x) round(x, 3)))
+median_iqr <- median_iqr |>
+  mutate(across(where(is.numeric), \(x) round(x, 3)))
 
-effect_results
+median_iqr
 ```
 
-Effect-size interpretation (rank-biserial): |r| < 0.1 negligible, 0.1–0.3 small, 0.3–0.5 medium, > 0.5 large.
+> *Taught in: W20-02 — median/IQR are the standard descriptive summary paired with the Wilcoxon test in the alpha-diversity practical. (Rank-biserial effect size from the `effectsize` package was removed: not part of the course material.)*
 
 # 6. Depth confounding
 
@@ -150,6 +162,8 @@ depth_results <- alpha_all |>
 
 depth_results
 ```
+
+> *Taught in: W20-02 — sequencing-depth confounding exercise: Spearman `cor.test(..., method = "spearman")` of depth against a diversity metric. (Here depth = `Nr..reads.sequenced` from sample metadata.)*
 
 A small |ρ| (< 0.1) and a non-significant p-value indicate no meaningful depth confound.
 
@@ -175,6 +189,8 @@ ggplot(alpha_long, aes(x = Disease, y = value, fill = Disease)) +
        subtitle = "Shannon, Simpson, Inverse Simpson at genus and species level")
 ```
 
+> *Taught in: W20-02 — boxplots of alpha diversity by group (`plot_richness` / ggplot boxplots) in the alpha-diversity practical.*
+
 # 8. Covariate adjustment
 
 Within the filtered cohort, additional covariates may still confound the disease effect — BMI, host age, and sex are biologically plausible candidates. Wilcoxon does not natively adjust for covariates, so we switch to a linear model on Shannon diversity. This is reasonable because Shannon at sample level is approximately continuous and not extremely skewed.
@@ -185,6 +201,8 @@ summary(alpha_genus$BMI)
 summary(alpha_genus$Host.age)
 table(alpha_genus$Sex, alpha_genus$Disease.MESH.ID, useNA = "ifany")
 ```
+
+> *Taught in: W21 reference Rmd §7 / Alberdi reading ("Multivariate statistics and multiple correction") §5 — covariate inspection prior to adjustment. BMI / host age / sex are project-chosen covariates (the method of adjusting for covariates is taught; the specific choice of these three is ours).*
 
 If `BMI` has many NAs, those samples are dropped from the adjusted model only — the unadjusted comparison still uses all samples.
 
@@ -202,6 +220,8 @@ summary(mod_unadjusted)$coefficients
 summary(mod_adjusted)$coefficients
 ```
 
+> *Taught in: W21 reference Rmd §7 / Alberdi reading §5 — linear models with covariates to adjust a group effect. Applied here to Shannon diversity; BMI / host age / sex are the project-chosen covariates.*
+
 The key comparison is the `Disease.MESH.IDD006262` coefficient between the unadjusted and adjusted models. If the magnitude is similar and the term remains significant after adjustment, the disease effect is not explained by BMI / age / sex. If the coefficient shrinks substantially, those covariates were carrying part of the apparent disease signal.
 
 ```{r adjusted-models-species}
@@ -217,23 +237,26 @@ summary(mod_unadjusted_sp)$coefficients
 summary(mod_adjusted_sp)$coefficients
 ```
 
+> *Taught in: W21 reference Rmd §7 / Alberdi reading §5 — same covariate-adjusted linear model repeated at species level (project direction: report both genus and species).*
+
 # 9. Summary table
 
 ```{r summary-table}
 summary_tbl <- wilcox_results |>
-  left_join(effect_results, by = c("level", "metric"))
+  left_join(median_iqr, by = c("level", "metric", "median_T2D", "median_HC"))
 
 summary_tbl
 ```
+
+> *Taught in: project synthesis — joins the Wilcoxon p-values (W20-02) with the median/IQR descriptive summary (W20-02).*
 
 # 10. Interpretation
 
 Reading this table:
 
 - For each metric × level, the Wilcoxon `p_value` tells you whether T2D and Healthy distributions differ.
-- The `r` (rank-biserial) tells you how large the difference is. Positive r typically means the first level (T2D, D003924) tends to higher values; sign convention varies, so always check by comparing medians.
-- `median_T2D` and `median_HC` give the direction of the difference at a glance.
-- Whether the same direction and significance hold at both genus and species levels is itself informative — disagreement between levels often reflects a finer-resolution structure (e.g. genus-level signal that is not driven by a particular dominant species).
+- `median_T2D`, `median_HC`, and `median_diff` give the size and direction of the difference at a glance; `IQR_T2D` / `IQR_HC` describe the spread within each group.
+- Whether the same direction and significance hold at both genus and species levels is itself informative — disagreement between levels often reflects a finer-resolution structure (e.g. genus-level signal that is not driven by a particular dominant species). Per the teacher's guidance, a genus-level difference is not "less real" than a species-level one and is not disregarded when species is non-significant.
 
 The covariate-adjusted linear model tells you whether the Disease coefficient survives BMI / age / sex adjustment. A surviving coefficient is the cleanest claim of a disease-specific alpha-diversity effect.
 
@@ -245,5 +268,7 @@ The covariate-adjusted linear model tells you whether the Disease coefficient su
 #saveRDS(mod_adjusted,     "project/results/alpha_lm_adjusted_genus.rds")
 #saveRDS(mod_adjusted_sp,  "project/results/alpha_lm_adjusted_species.rds")
 ```
+
+> *Taught in: housekeeping (`saveRDS`/`dir.create`) — not a course method; persists results for reuse.*
 
 (If `project/results/` does not exist, create it once with `dir.create("project/results")`.)

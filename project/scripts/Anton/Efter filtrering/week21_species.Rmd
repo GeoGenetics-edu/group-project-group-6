@@ -37,6 +37,8 @@ library(broom)
 library(microbiome)
 ```
 
+> *Taught in: W21 reference Rmd §1 "Loading of required libraries" (same phyloseq + vegan + tidyverse + broom + microbiome stack; mixed-model packages dropped as none are used).*
+
 ## Load and filter species data
 
 ```{r load-data}
@@ -49,6 +51,8 @@ table(sample_data(ps)$Disease.MESH.ID)
 ntaxa(ps)
 ```
 
+> *Taught in: W21 reference Rmd §1 "Load and inspect the data" (`readRDS`/`load` the phyloseq object, check `ntaxa`, group table). Cohort `subset_samples` taught in W20-01.*
+
 Expected: 187 T2D + 172 Healthy = 359 samples, ~173 species.
 
 ## Build relative-abundance long table
@@ -60,6 +64,8 @@ meta_rel <- data.frame(sample_data(ps_rel))
 tax_rel  <- as(tax_table(ps_rel), "matrix") %>% as.data.frame()
 ```
 
+> *Taught in: W21 reference Rmd §2 "Visualise community composition" (`transform_sample_counts` to relative abundance, then extract OTU/meta/tax as data frames).*
+
 ```{r build-dat-rel}
 dat_rel <- otu_rel %>%
   rownames_to_column("sample_id") %>%
@@ -68,19 +74,19 @@ dat_rel <- otu_rel %>%
   left_join(tax_rel  %>% rownames_to_column("taxon"),     by = "taxon")
 ```
 
-## Prevalence filter
+> *Taught in: W21 reference Rmd §2 (the hidden chunk that builds the long `dat_rel` table joining abundance + metadata + taxonomy).*
+
+## Drop undetected (all-zero) species
 
 At species level a fraction of the taxa in the reference catalogue are not detected in this cohort at all — relative abundance is zero in every sample of both disease groups. Wilcoxon (and every other rank-based or variance-based test) returns `NaN` for such taxa because there are no rank or variance differences to compute when all values are tied at zero. This is the correct mathematical output, not a bug, but the resulting NaN rows clutter the output tables and inflate the multiple-testing burden without contributing biological signal.
 
-We therefore restrict per-taxon analyses to taxa present in at least 10 % of samples in at least one disease group.
+We therefore drop only the taxa that are **all-zero across every sample** — the taxa for which the test statistic is mathematically undefined. We do **not** impose any abundance or prevalence threshold beyond "detected at least once," so no taxon carrying real signal is removed.
 
 ```{r prevalence-filter}
 prevalent_taxa <- dat_rel %>%
-  group_by(taxon, Disease.MESH.ID) %>%
-  summarise(prevalence = mean(rel_abund > 0), .groups = "drop") %>%
   group_by(taxon) %>%
-  summarise(max_prev = max(prevalence), .groups = "drop") %>%
-  filter(max_prev >= 0.10) %>%
+  summarise(any_nonzero = any(rel_abund > 0), .groups = "drop") %>%
+  filter(any_nonzero) %>%
   pull(taxon)
 
 n_before <- length(unique(dat_rel$taxon))
@@ -89,11 +95,13 @@ n_after  <- length(prevalent_taxa)
 tibble(
   taxa_before_filter = n_before,
   taxa_after_filter  = n_after,
-  taxa_removed       = n_before - n_after
+  taxa_removed       = n_before - n_after   # = taxa that were zero in all 359 samples
 )
 
 dat_rel <- dat_rel %>% filter(taxon %in% prevalent_taxa)
 ```
+
+> *Project-necessary data-hygiene step, not a taught threshold. The W21 reference Rmd never hits this because its genus-level data has no all-zero taxa; at species level the reference catalogue contains species undetected in this cohort, for which `wilcox.test`/`lm` return `NaN` (all values tied at zero → no rank or variance to compare). Removing only all-zero taxa drops undefined tests without imposing an arbitrary prevalence cut-off, so it introduces nothing beyond what is taught.*
 
 All downstream per-taxon tests (Wilcoxon, GLM, CLR, RDA loadings) inherit this filter through `dat_rel` and the parallel `dat_clr` (filtered in the same way after CLR construction).
 
@@ -116,6 +124,8 @@ plot_bar(ps_top, fill = "Species") +
        fill = "Species")
 ```
 
+> *Taught in: W21 reference Rmd §2 "Visualise community composition" (`plot_bar` + `facet_nested`). Restricting to the top-20 taxa with `taxa_sums` + `prune_taxa` is a project readability choice (the reference uses `tax_glom`; here the panel is already at the finest rank, so we cap the legend instead).*
+
 # Univariate statistics
 
 ## Wilcoxon rank-sum test
@@ -135,6 +145,8 @@ wilcox_results <- dat_rel %>%
 head(wilcox_results, 10)
 ```
 
+> *Taught in: W21 reference Rmd §5 "Wilcoxon rank-sum test" (one `wilcox.test(... ~ group, exact = FALSE)` per taxon, group means, `log2_fc`, BH-adjusted `q_value`). Wilcoxon-over-t-test rationale: Alberdi reading §3; BH/FDR: §6 + W20-02.*
+
 ### Top T2D-depleted (Wilcoxon)
 
 ```{r wilcox-depleted}
@@ -145,6 +157,8 @@ wilcox_T2D_depleted <- wilcox_results %>%
 
 wilcox_T2D_depleted
 ```
+
+> *Taught in: W21 reference Rmd §5 (top table ordered by `log2_fc`, depleted tail).*
 
 ```{r wilcox-depleted-plot, fig.width=6, fig.height=4}
 top_taxon <- wilcox_T2D_depleted %>% slice(1) %>% pull(taxon)
@@ -160,6 +174,8 @@ dat_rel %>%
     labs(title = paste("Top T2D-depleted (Wilcoxon):", top_label))
 ```
 
+> *Taught in: W21 reference Rmd §5 (raw boxplot + jitter of the top hit as a visual check of test direction).*
+
 ### Top T2D-enriched (Wilcoxon)
 
 ```{r wilcox-enriched}
@@ -170,6 +186,8 @@ wilcox_T2D_enriched <- wilcox_results %>%
 
 wilcox_T2D_enriched
 ```
+
+> *Taught in: W21 reference Rmd §5 (top table ordered by `log2_fc`, enriched tail).*
 
 ```{r wilcox-enriched-plot, fig.width=6, fig.height=4}
 top_taxon <- wilcox_T2D_enriched %>% slice(1) %>% pull(taxon)
@@ -184,6 +202,8 @@ dat_rel %>%
     theme_bw() +
     labs(title = paste("Top T2D-enriched (Wilcoxon):", top_label))
 ```
+
+> *Taught in: W21 reference Rmd §5 (raw boxplot + jitter of the top enriched hit).*
 
 ### Volcano plot — Wilcoxon
 
@@ -210,6 +230,8 @@ wilcox_results %>%
     theme_bw()
 ```
 
+> *Taught in: W21 reference Rmd §5 (volcano plot: `log2_fc` on x, `-log10(q)` on y, q < 0.05 line).*
+
 ## GLM (unadjusted)
 
 ```{r glm-unadj-results}
@@ -228,6 +250,8 @@ glm_disease_results <- dat_rel %>%
     fold_change_T2D_vs_Healthy = 10^estimate
   )
 ```
+
+> *Taught in: W21 reference Rmd §6 "log-transformed linear models" (`glm(log10(rel_abund + 1e-6) ~ group)` per taxon, BH-adjusted, `10^estimate` = fold change). Logs + pseudocount: Alberdi reading §4; linear models: §5.*
 
 ```{r glm-unadj-volcano, fig.width=8, fig.height=5}
 glm_disease_results %>%
@@ -252,6 +276,8 @@ glm_disease_results %>%
     theme_bw()
 ```
 
+> *Taught in: W21 reference Rmd §6 (GLM volcano plot using the model estimate as the effect-size axis).*
+
 ## Primary adjusted model — Sex + Host.age (n = 359)
 
 ```{r glm-adj-results}
@@ -275,6 +301,8 @@ glm_disease_adjusted_sex_results <- dat_rel %>%
   )
 ```
 
+> *Taught in: W21 reference Rmd §7 "Adjust the linear model" (same GLM with covariates; teacher uses `status`, here `Sex` + `Host.age`). Covariate adjustment: Alberdi reading §5. Sex/Age are the only complete, polymorphic metadata variables in this cohort.*
+
 ### Top T2D-depleted (GLM adj. Sex + Age)
 
 ```{r glm-adj-depleted}
@@ -287,6 +315,8 @@ glm_adj_T2D_depleted <- glm_disease_adjusted_sex_results %>%
 glm_adj_T2D_depleted
 ```
 
+> *Taught in: W21 reference Rmd §7 (adjusted top table, depleted tail).*
+
 ### Top T2D-enriched (GLM adj. Sex + Age)
 
 ```{r glm-adj-enriched}
@@ -298,6 +328,8 @@ glm_adj_T2D_enriched <- glm_disease_adjusted_sex_results %>%
 
 glm_adj_T2D_enriched
 ```
+
+> *Taught in: W21 reference Rmd §7 (adjusted top table, enriched tail).*
 
 ### Volcano plot — GLM adjusted
 
@@ -324,6 +356,8 @@ glm_disease_adjusted_sex_results %>%
     theme_bw()
 ```
 
+> *Taught in: W21 reference Rmd §7 (adjusted-model volcano plot).*
+
 ## Compositional analysis with CLR transformation
 
 ```{r clr-transform}
@@ -336,14 +370,18 @@ meta_clr <- data.frame(sample_data(ps_clr))
 tax_clr  <- as(tax_table(ps_clr), "matrix") %>% as.data.frame()
 ```
 
+> *Taught in: W21 reference Rmd §9 "Compositional analysis with CLR transformation" (the CLR closure: pseudocount + `log(x) - mean(log(x))`). Why CLR for closed relative-abundance data: Alberdi reading §7.*
+
 ```{r build-dat-clr}
 dat_clr <- otu_clr %>%
   rownames_to_column("sample_id") %>%
   pivot_longer(-sample_id, names_to = "taxon", values_to = "clr") %>%
   left_join(meta_clr %>% rownames_to_column("sample_id"), by = "sample_id") %>%
   left_join(tax_clr  %>% rownames_to_column("taxon"),     by = "taxon") %>%
-  filter(taxon %in% prevalent_taxa)   # apply the same prevalence filter as dat_rel
+  filter(taxon %in% prevalent_taxa)   # drop the same all-zero species as dat_rel
 ```
+
+> *Taught in: W21 reference Rmd §9 (the hidden chunk reshaping CLR values into long `dat_clr`). The trailing `filter` re-applies the all-zero drop from the "Drop undetected species" section so `dat_clr` and `dat_rel` cover the same taxa.*
 
 ```{r clr-results}
 clr_disease_adjusted_sex_results <- dat_clr %>%
@@ -362,6 +400,8 @@ clr_disease_adjusted_sex_results <- dat_clr %>%
   mutate(q_value = p.adjust(p.value, method = "BH"))
 ```
 
+> *Taught in: W21 reference Rmd §9 (`lm(clr ~ group + covariate)` per taxon, BH-adjusted; teacher adjusts for `status`, here `Sex` + `Host.age`).*
+
 ### Top T2D-depleted (CLR)
 
 ```{r clr-depleted}
@@ -372,6 +412,8 @@ clr_T2D_depleted <- clr_disease_adjusted_sex_results %>%
 
 clr_T2D_depleted
 ```
+
+> *Taught in: W21 reference Rmd §9 (CLR top table, depleted tail).*
 
 ```{r clr-depleted-plot, fig.width=6, fig.height=4}
 top_taxon <- clr_T2D_depleted %>% slice(1) %>% pull(taxon)
@@ -388,6 +430,8 @@ dat_clr %>%
          y = "CLR-transformed value")
 ```
 
+> *Taught in: W21 reference Rmd §9 (boxplot of the top CLR hit on the CLR scale).*
+
 ### Top T2D-enriched (CLR)
 
 ```{r clr-enriched}
@@ -398,6 +442,8 @@ clr_T2D_enriched <- clr_disease_adjusted_sex_results %>%
 
 clr_T2D_enriched
 ```
+
+> *Taught in: W21 reference Rmd §9 (CLR top table, enriched tail).*
 
 ```{r clr-enriched-plot, fig.width=6, fig.height=4}
 top_taxon <- clr_T2D_enriched %>% slice(1) %>% pull(taxon)
@@ -413,6 +459,8 @@ dat_clr %>%
     labs(title = paste("Top T2D-enriched (CLR):", top_label),
          y = "CLR-transformed value")
 ```
+
+> *Taught in: W21 reference Rmd §9 (boxplot of the top enriched CLR hit on the CLR scale).*
 
 ### Volcano plot — CLR
 
@@ -439,6 +487,8 @@ clr_disease_adjusted_sex_results %>%
     theme_bw()
 ```
 
+> *Taught in: W21 reference Rmd §9 (CLR volcano plot — the compositionally aware reference analysis).*
+
 ## Sensitivity analysis — adding BMI (n = 151)
 
 ```{r covariate-availability}
@@ -448,6 +498,8 @@ sensitivity_n <- meta_check %>%
   nrow()
 sensitivity_n
 ```
+
+> *Project-chosen step (not a separate taught method): counts samples with complete covariates, the precondition for the complete-case BMI model. Inspecting `sample_data` taught in W20-01.*
 
 ### GLM sensitivity — Sex + Host.age + BMI
 
@@ -480,6 +532,8 @@ glm_disease_sensitivity_BMI %>%
   head(10)
 ```
 
+> *Method taught in: W21 reference Rmd §7 (covariate-adjusted GLM) — identical model with BMI added. BMI is a **project-chosen** covariate run only as a sensitivity check (missing for 58% of samples), not part of the reference.*
+
 ### CLR sensitivity — Sex + Host.age + BMI
 
 ```{r clr-sensitivity-BMI}
@@ -505,6 +559,8 @@ clr_disease_sensitivity_BMI %>%
   arrange(estimate) %>%
   head(10)
 ```
+
+> *Method taught in: W21 reference Rmd §9 (covariate-adjusted CLR linear model) — identical model with BMI added. BMI is a **project-chosen** sensitivity covariate, not part of the reference.*
 
 ### Primary vs BMI-sensitivity scatter (CLR)
 
@@ -542,6 +598,8 @@ clr_disease_adjusted_sex_results %>%
     theme_bw()
 ```
 
+> *Plot technique taught in: W21 reference Rmd §10 (effect-size scatter of two models against the identity line). Comparing primary vs BMI-sensitivity is a project-chosen application of that technique.*
+
 ## Compare differential abundance methods
 
 ```{r comparison-build}
@@ -565,6 +623,8 @@ comparison_results <- wilcox_results %>%
     by = "taxon"
   )
 ```
+
+> *Taught in: W21 reference Rmd §10 "Compare differential abundance methods" (the hidden chunk joining all methods' estimates + q-values into `comparison_results`).*
 
 ### Significant taxa per method
 
@@ -591,6 +651,8 @@ sig_summary <- tibble(
 sig_summary
 ```
 
+> *Taught in: W21 reference Rmd §10 (count of significant taxa per method at q < 0.05). The reference has 4 rows; the two BMI-sensitivity rows are project additions reporting the same count for the sensitivity models.*
+
 ### Taxa significant in all four primary methods
 
 ```{r all-methods-sig}
@@ -601,6 +663,8 @@ all_methods_sig <- comparison_results %>%
 
 all_methods_sig
 ```
+
+> *Taught in: W21 reference Rmd §10 (taxa significant in all four methods = consensus candidates).*
 
 ### Concordance across methods
 
@@ -622,6 +686,8 @@ comparison_results %>%
          title = "Concordance of significance across methods (species level)") +
     theme_bw()
 ```
+
+> *Taught in: W21 reference Rmd §10 (bar chart counting how many methods support each taxon).*
 
 ### Significance × direction heatmap
 
@@ -673,6 +739,8 @@ heatmap_data %>%
     theme(axis.text.y = element_text(size = 6))
 ```
 
+> *Taught in: W21 reference Rmd §10 (signed `-log10(q)` heatmap across methods for taxa significant in ≥1 method; `*` marks q < 0.05, `scale_fill_gradient2` encodes direction).*
+
 # Multivariate statistics
 
 ## PCA of CLR-transformed species profiles
@@ -701,16 +769,22 @@ pca_scores %>%
     theme_bw()
 ```
 
+> *Taught in: W21 reference Rmd §11 "PCA of CLR-transformed gut profiles" (`prcomp` on the CLR matrix, PC1/PC2 coloured by group, `% variance` from `sdev^2`). Ordination of CLR/Aitchison data also W20-03; whole-community structure Alberdi reading §8.*
+
 ## Constrained ordination with RDA
 
 ```{r rda-fit}
 rda_disease <- rda(clr_mat ~ Disease.MESH.ID + Sex, data = meta_pca)
 ```
 
+> *Taught in: W21 reference Rmd §12 "Constrained ordination with RDA" (`rda(clr_mat ~ predictors)`; reference constrains by age + status, here Disease + Sex). Constrained ordination: Alberdi reading §8.*
+
 ```{r rda-anova}
 anova(rda_disease, permutations = 999)
 anova(rda_disease, by = "term", permutations = 999)
 ```
+
+> *Taught in: W21 reference Rmd §12 (`anova(rda, permutations = 999)` whole-model and `by = "term"` per-predictor permutation tests). Permutation testing of ordination also relates to PERMANOVA `adonis2` in W20-03.*
 
 ```{r rda-taxa}
 rda_site_scores_raw <- scores(rda_disease, display = "sites")
@@ -728,6 +802,8 @@ rda_taxa <- tibble(
 ) %>%
   arrange(desc(abs(rda1_loading)))
 ```
+
+> *Taught in: W21 reference Rmd §12 (extract RDA1 taxon scores via `scores(..., display = "species")`, sign-orient RDA1 by group means, rank by absolute loading).*
 
 ### RDA biplot
 
@@ -789,6 +865,8 @@ ggplot() +
   theme_bw()
 ```
 
+> *Taught in: W21 reference Rmd §12 (RDA biplot overlaying site scores, constraint arrows (`display = "bp"`) and top-species arrows, with the same ~80%/60% arrow rescaling).*
+
 ### Top 20 species by RDA1 loading
 
 ```{r rda-loadings, fig.width=8, fig.height=6}
@@ -808,6 +886,8 @@ rda_taxa %>%
          title = "Top 20 species by RDA1 loading magnitude") +
     theme_bw()
 ```
+
+> *Taught in: W21 reference Rmd §12 (bar chart of the top 20 taxa by RDA1 loading, coloured by group side).*
 
 ### RDA loadings vs CLR univariate estimates
 
@@ -846,6 +926,8 @@ rda_clr_comparison %>%
     theme_bw()
 ```
 
+> *Taught in: W21 reference Rmd §12 (scatter linking RDA1 loadings to univariate CLR estimates, coloured by significance + direction agreement).*
+
 ### Top 20 RDA loading species with their CLR statistics
 
 ```{r rda-clr-table}
@@ -854,6 +936,8 @@ rda_clr_comparison %>%
   select(Genus, Species, rda1_loading, clr_estimate, clr_q, direction_agreement) %>%
   head(20)
 ```
+
+> *Taught in: W21 reference Rmd §12 (final table of the top 20 RDA-loading taxa with CLR estimate, q-value and direction agreement).*
 
 # Species-vs-genus comparison guidance
 
