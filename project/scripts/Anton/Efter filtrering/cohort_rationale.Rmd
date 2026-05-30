@@ -32,9 +32,10 @@ library(ggplot2)
 library(dplyr)
 library(tibble)
 library(tidyr)
-library(effectsize)
 library(knitr)
 ```
+
+> *Reference: same library stack used in W20-01, W20-02 and W20-03 (phyloseq, tidyverse, tibble) and W20-03 (vegan).*
 
 # 2. Load the unfiltered dataset
 
@@ -46,17 +47,23 @@ rm(pylsq)
 ps_raw
 ```
 
+> *Reference: phyloseq object construction/inspection pattern from W20-01 §"Create the phyloseq object" + §"Inspect the components".*
+
 # 3. Disease distribution
 
 ```{r disease-counts}
 table(sample_data(ps_raw)$Disease.MESH.ID, useNA = "ifany")
 ```
 
+> *Reference: metadata inspection from W20-01 §"Inspect the components" (uses `sample_data(ps)` and tabulates).*
+
 # 4. ProjectIDs
 
 ```{r project-counts}
 table(sample_data(ps_raw)$Project.ID, useNA = "ifany")
 ```
+
+> *Reference: metadata inspection from W20-01 §"Inspect the components"; cohort/country exploration explicitly endorsed by Urvish in Slack ("plot your data with multiple countries first…").*
 
 Are they from three different studies? This would introduce more than just geographical noice.
 
@@ -66,6 +73,8 @@ Are they from three different studies? This would introduce more than just geogr
 table(sample_data(ps_raw)$Project.ID,
       sample_data(ps_raw)$Disease.MESH.ID)
 ```
+
+> *Reference: cross-tabulation of two metadata variables — extension of W20-01 §"Inspect the components" pattern; the design rationale (checking case/control balance per study) is the Slack-endorsed exploratory step.*
 
 Two of three studies contain no healthy controls at all. 
 
@@ -82,6 +91,8 @@ table(sample_data(ps_raw)$Country,
       sample_data(ps_raw)$Disease.MESH.ID)
 ```
 
+> *Reference: metadata cross-tabulations; cohort/country exploration explicitly endorsed by Urvish in Slack.*
+
 PRJNA422434 = China
 
 # 7. Is there a significant difference between the cohorts?
@@ -96,6 +107,8 @@ bray_full      <- distance(ps_rel_full, method = "bray")
 sample_df_full <- sample_data(ps_rel_full) |> data.frame()
 ```
 
+> *Reference: W20-03 §"Preparing transformed phyloseq objects" + §"Calculating beta-diversity distances".*
+
 ## 7.2 PCoA — coloured by Project
 
 ```{r pcoa-by-project, fig.width=9, fig.height=6}
@@ -109,6 +122,8 @@ plot_ordination(ps_rel_full, ord_full, color = "Project.ID") +
        subtitle = "Three distinct cohort clusters")
 ```
 
+> *Reference: W20-03 §"PCoA based on Bray-Curtis distance" — uses `ordinate(method = "PCoA")` and `plot_ordination()` coloured by a metadata variable.*
+
 ## 7.3 PCoA — coloured by Disease (same samples, same positions)
 
 ```{r pcoa-by-disease, fig.width=9, fig.height=6}
@@ -119,6 +134,8 @@ plot_ordination(ps_rel_full, ord_full, color = "Disease.MESH.ID") +
   labs(title = "Bray-Curtis PCoA on full dataset — coloured by Disease",
        subtitle = "Disease colour pattern mirrors the cohort pattern above")
 ```
+
+> *Reference: same `plot_ordination()` call as the previous chunk, just recolored — W20-03 §"PCoA based on Bray-Curtis distance".*
 
 The two plots show the same samples in the same positions; only the colour differs. If the disease colouring traces the same shape as the project colouring, what looks like a "T2D vs Healthy" pattern is being driven by cohort membership.
 
@@ -131,6 +148,8 @@ adonis2(bray_full ~ Project.ID,
         data = sample_df_full,
         permutations = 999)
 ```
+
+> *Reference: W20-03 §"Testing Bray-Curtis distances across body sites" — uses the identical `adonis2(distance ~ group, data = sample_df, permutations = 999)` pattern. Conceptually grounded in Alberdi's multivariate-statistics lecture (PERMANOVA).*
 Permanova on the full dataset shows that ProjectID explains ~13% of the variance (R^2 = 0.12887) with a large f statistic (F = 31.73) and a significant P-value (0.001).
 
 ## 7.5 PERMANOVA on Country alone
@@ -142,6 +161,8 @@ adonis2(bray_full ~ Country,
         data = sample_df_full,
         permutations = 999)
 ```
+
+> *Reference: same `adonis2()` pattern as the previous chunk — W20-03 §"Testing Bray-Curtis distances across body sites".*
 Same pattern as before, maybe even stronger. Accounts for 14.2% of total variance. (F=9.77, p = 0.001)
 ## 7.6 PERMANOVA on Disease alone (unadjusted)
 
@@ -152,6 +173,8 @@ adonis2(bray_full ~ Disease.MESH.ID,
         data = sample_df_full,
         permutations = 999)
 ```
+
+> *Reference: same `adonis2()` pattern — W20-03 §"Testing Bray-Curtis distances across body sites".*
 For comparison, Disease alone on the unfiltered dataset explained 2.964% of variance (F = 13.13, p = 0.001)
 
 ## 7.7 Adjusted PERMANOVA: Project and Disease together
@@ -164,6 +187,8 @@ adonis2(bray_full ~ Project.ID + Disease.MESH.ID,
         by = "margin",
         permutations = 999)
 ```
+
+> *Reference: extension of W20-03's single-term `adonis2()` to a two-term formula with `by = "margin"`. The principle of partialling out a covariate is from Alberdi's "From counts to community" lecture §5 (Linear models & covariates) and W21 §7 (Adjust the linear model for health status), here applied to a multivariate distance instead of a univariate response.*
 The adjusted PERMANOVA (Project.ID + Disease.MESH.ID, by = 'margin') partitioned 11.3% of community variance to Project (F = 28.21, p = 0.001) and only 1.4% to Disease (F = 6.89, p = 0.001). More than half of the apparent unadjusted disease effect (3.0% in §7.6) was therefore cohort confounding rather than genuine disease signal. The Disease effect remains real and significant after adjustment, but its magnitude is approximately a fifth of the cohort effect — quantitatively justifying either covariate adjustment or, as we adopt here, structural filtering to a single case-control cohort.
 
 ## 7.8 betadisper — Project
@@ -174,6 +199,8 @@ A significant PERMANOVA could in principle reflect different dispersions rather 
 disp_project <- betadisper(bray_full, sample_df_full$Project.ID)
 anova(disp_project)
 ```
+
+> *Reference: W20-03 §"Checking homogeneity of dispersion" — uses `betadisper(dist, group)` followed by `anova()`.*
 betadisper on Project.ID showed significantly heterogeneous dispersions (F = 3.76, p = 0.024), indicating that part of the project effect reflects unequal within-cohort variability — plausibly attributable to PRJEB1786 spanning seven European countries internally. However, the dispersion F is approximately 8× smaller than the PERMANOVA F (31.73), meaning centroid differences remain the dominant component of the project effect. Both interpretations — centroid shift and dispersion difference — represent cohort confounding that the filtering decision addresses.
 
 
@@ -195,6 +222,8 @@ alpha_full <- inner_join(shannon_full, meta_full, by = "sample_id")
 head(alpha_full)
 ```
 
+> *Reference: W20-02 §"Calculating alpha diversity" (`estimate_richness(ps, measures = "Shannon")`) + §"Statistical testing of alpha diversity" (join with metadata by sample_id).*
+
 ## 8.2 Shannon by Project — Kruskal-Wallis and visualisation
 
 ```{r kruskal-project, fig.width=8, fig.height=4}
@@ -209,6 +238,8 @@ ggplot(alpha_full, aes(x = Project.ID, y = Shannon, fill = Project.ID)) +
        x = NULL, y = "Shannon")
 ```
 
+> *Reference: Kruskal-Wallis is the multi-group form of Wilcoxon — explicitly named in Alberdi's "From counts to community" lecture §3 (Wilcoxon rank-sum). Boxplot + jitter style follows W20-02 §"Visualising alpha diversity" (`plot_richness()` produces equivalent point + boxplot).*
+
 Shannon diversity differs dramatically across the three projects (Kruskal-Wallis χ² = 95.38, df = 2, p < 2.2 × 10⁻¹⁶). Median Shannon was highest in the European cohort (PRJEB1786, ~1.95), intermediate in the US cohort (PRJNA299502, ~1.78), and lowest in the Chinese cohort (PRJNA422434, ~1.55). Crucially, because all healthy controls are drawn from PRJNA422434 (the lowest-diversity population), any unadjusted T2D vs Healthy comparison on the full dataset would compare a cohort-mixed case group against a Chinese-only control group — guaranteeing a T2D > Healthy diversity pattern as a cohort artefact rather than a disease signal. This finding is the alpha-diversity analogue of the beta-diversity cohort effect quantified in §7, and provides additional structural justification for restricting analyses to PRJNA422434.
 
 ## 8.3 Pairwise comparisons across projects
@@ -219,29 +250,26 @@ pairwise.wilcox.test(alpha_full$Shannon,
                      p.adjust.method = "BH")
 ```
 
+> *Reference: W20-02 uses `pairwise.wilcox.test()` as the per-pair follow-up to an omnibus rank test; BH correction taught in Alberdi lecture §6 (Multiple testing & FDR) and W21 §8 (Control false discoveries with FDR).*
+
 "All three pairwise project comparisons are significant after BH correction (Europe vs USA: p = 0.0026; Europe vs China: p < 2 × 10⁻¹⁶; USA vs China: p = 0.00012), with median Shannon decreasing Europe > USA > China. The cohort effect on alpha diversity is therefore pervasive across all project pairs, not localised to any single outlier study. This rules out partial-pooling strategies as alternatives to single-cohort restriction — any combination of two or more projects would re-introduce a significant geographic confound, and only restriction to PRJNA422434 yields a homogeneous within-cohort comparison."
 
-## 8.4 Pairwise effect sizes
+## 8.4 Median Shannon per project
 
-```{r effects-project}
-project_pairs <- combn(unique(alpha_full$Project.ID), 2, simplify = FALSE)
+A non-parametric description of where the three cohorts sit on the Shannon scale, in line with the boxplot of §8.2.
 
-project_effects <- tibble()
-for (pair in project_pairs) {
-  sub <- alpha_full |> filter(Project.ID %in% pair)
-  rb <- rank_biserial(Shannon ~ Project.ID, data = sub)
-  project_effects <- bind_rows(project_effects, tibble(
-    pair     = paste(pair, collapse = " vs "),
-    r        = round(rb$r_rank_biserial, 3),
-    CI_lower = round(rb$CI_low, 3),
-    CI_upper = round(rb$CI_high, 3)
-  ))
-}
-project_effects
+```{r medians-project}
+alpha_full |>
+  group_by(Project.ID) |>
+  summarise(
+    median_Shannon = median(Shannon, na.rm = TRUE),
+    IQR_Shannon    = IQR(Shannon, na.rm = TRUE),
+    n              = dplyr::n(),
+    .groups = "drop"
+  )
 ```
-"Pairwise rank-biserial effect sizes confirm that cohort differences in Shannon diversity are very large in magnitude. The Europe-vs-China comparison (r = 0.774, 95% CI [0.699, 0.833]) is roughly four times larger than the within-cohort disease effect previously measured in PRJNA422434 (r = 0.19). All three pairwise cohort effects exceed the disease effect in magnitude, providing the quantitative basis for restricting analyses to a single project: in any pooled comparison, the cohort signal would dominate any disease signal of typical microbiome-study magnitude."
 
-
+> *Reference: medians + IQR per group are the descriptive summary used alongside Wilcoxon in W20-02 §"Statistical testing of alpha diversity".*
 
 
 The point: substantial Shannon differences between projects, with effect sizes that in some cases exceed the disease effect within the clean cohort. The unfiltered "disease effect" on Shannon is therefore not separable from cohort.
@@ -259,6 +287,8 @@ mod_adjusted   <- lm(Shannon ~ Disease.MESH.ID + Project.ID,
 summary(mod_unadjusted)$coefficients
 summary(mod_adjusted)$coefficients
 ```
+
+> *Reference: W21 §7 (Adjust the linear model for health status) — uses `glm(response ~ predictor + covariate)` with the same nested-model comparison logic. Alberdi lecture §5 (Linear models & covariates) is the underlying theory.*
 "A linear model on the unfiltered Shannon data showed that Healthy samples had 0.190 Shannon units lower diversity than T2D samples (β = −0.190, p = 1.96 × 10⁻⁹). After adjusting for Project.ID, this disease coefficient shrank by 47% to β = −0.101 (p = 0.0013), while the China-vs-Europe project coefficient (β = −0.353, p = 7.3 × 10⁻¹⁴) was 3.5 times larger than the adjusted disease coefficient. The unadjusted disease estimate therefore packages together genuine within-population disease variation and the cohort-mixing artefact of comparing a Chinese-only Healthy group against a partly non-Chinese T2D group. The adjusted estimate is the unconfounded disease effect; restricting analyses to PRJNA422434 yields the same comparison without requiring covariate adjustment in every downstream test."
 
 

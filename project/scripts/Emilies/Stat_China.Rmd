@@ -1,0 +1,1393 @@
+---
+title: "Stat_China"
+output: html_document
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+```
+
+Libraries
+```{r, echo=FALSE}
+library(phyloseq)
+library(vegan)
+library(dplyr)
+library(tibble)
+library(purrr)
+library(stringr)
+library(ggplot2)
+library(tidyverse)
+library(ggh4x)
+library(lme4)
+library(lmerTest)
+library(broom.mixed)
+library(microbiome)
+```
+
+
+Load phyloseq - species 
+```{r}
+load("~/group-project-group-6/project/data/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
+ps_s <- pylsq
+rm(pylsq) # fjerne pylsq, så man kan have mere end et. 
+
+# Undersøger phylseq
+ps_s
+rank_names(ps_s)
+sample_variables(ps_s)
+
+# Kun kina
+ps_china <- subset_samples(ps_s,
+                           Project.ID == "PRJNA422434")
+
+# Undersøger phylseq
+ps_china
+rank_names(ps_china)
+sample_variables(ps_china)
+
+```
+
+## Visualise community composition
+
+Details: [2. Visualise Community Composition][wiki-composition]. Convert counts to relative abundance and plot genus-level composition across body site, age and health status.
+
+NB! Undersøg relative abundance 
+
+```{r}
+# Step 2 — Convert counts to relative abundance
+ps_rel <- transform_sample_counts(ps_china, function(x) x / sum(x))
+otu_rel <- as(otu_table(ps_rel), "matrix") %>% t() %>% as.data.frame()
+meta_rel <- as(sample_data(ps_rel), "matrix") %>% as.data.frame()
+tax_rel <- as(tax_table(ps_rel), "matrix") %>% as.data.frame()
+
+# Step 3 — Aggregate taxa to genus level
+ps_genus <- tax_glom(ps_rel, taxrank = "Genus")
+
+#plot_bar(ps_genus, fill = "Genus") +
+  #facet_nested(~ Disease.MESH.ID + Sex, scales = "free_x") +
+  #theme_bw() +
+  #theme(axis.text.x = element_blank())
+
+
+# Hjælp fra Chat til at samle data fra sample
+# Top 10 genera
+
+top10 <- names(sort(
+  taxa_sums(ps_genus),
+  decreasing = TRUE
+))[1:10]
+
+ps_top <- prune_taxa(
+  top10,
+  ps_genus
+)
+
+ps_disease <- merge_samples(
+  ps_top,
+  group = "Disease.MESH.ID"
+)
+
+ps_disease <- transform_sample_counts(
+  ps_disease,
+  function(x) x / sum(x)
+)
+
+plot_bar(
+  ps_disease,
+  fill = "Genus"
+) +
+  theme_bw() +
+  labs(title = "Top 10 genera by disease group")
+```
+Der er forskel i taxa abundance 
+
+The hidden chunk below creates `dat_rel`, the long relative-abundance table used by the remaining relative-abundance analyses.
+
+```{r, include=FALSE}
+dat_rel <- otu_rel %>%
+  rownames_to_column("sample_id") %>%
+  pivot_longer(-sample_id, names_to = "taxon", values_to = "rel_abund") %>%
+  left_join(meta_rel %>% as("data.frame") %>% rownames_to_column("sample_id"), by = "sample_id") %>%
+  left_join(tax_rel %>% rownames_to_column("taxon"), by = "taxon")
+```
+
+# Univariate statistics
+
+These sections analyse taxa one at a time. 
+The first statistical block treats each taxon as its own response variable. This is the familiar differential-abundance framing: for each taxon, ask whether its abundance differs between infant and adult gut samples, then correct for the fact that many taxa are tested.
+
+Univariate tests are useful because they return concrete candidate taxa, effect sizes and q-values. Their limitation is that they do not directly model the gut microbiome as a coordinated community. That limitation is handled later in the multivariate block.
+
+
+## Diagnose the data before testing
+
+Details: [4. Diagnose the Data Before Testing][wiki-diagnose]. The next three chunks diagnose zero-inflation, skewness and non-normality among gut taxa.
+
+```{r}
+dat_rel %>%
+  group_by(taxon) %>%
+  summarise(prop_zero = mean(rel_abund == 0), .groups = "drop") %>%
+  ggplot(aes(x = prop_zero)) +
+    geom_histogram(binwidth = 0.05, fill = "steelblue", color = "white") +
+    labs(x = "Proportion of samples where relative abundance = 0",
+         y = "Number of taxa",
+         title = "Zero-inflation: most taxa are absent from most samples") +
+    theme_bw()
+```
+
+
+
+## Visualise community composition
+
+```{r composition-bar, fig.width=11, fig.height=5}
+ps_rel  <- transform_sample_counts(ps_china, function(x) x / sum(x))
+otu_rel <- as(otu_table(ps_rel), "matrix") %>% t() %>% as.data.frame()
+meta_rel <- data.frame(sample_data(ps_rel))
+tax_rel  <- as(tax_table(ps_rel), "matrix") %>% as.data.frame()
+
+plot_bar(ps_rel, fill = "Species") +
+  geom_bar(aes(fill = Species), stat = "identity", colour = NA) +
+  facet_nested(~ Sex + Disease.MESH.ID, scales = "free_x") +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        legend.position = "none") +
+  labs(title = "Genus-level composition by Sex × Disease",
+       fill = "Genus")
+```
+
+The data is already at genus level (58 taxa) — no `tax_glom` needed. Legend hidden because 58 categories are unreadable.
+
+```{r build-dat-rel, include=FALSE}
+dat_rel <- otu_rel %>%
+  rownames_to_column("sample_id") %>%
+  pivot_longer(-sample_id, names_to = "taxon", values_to = "rel_abund") %>%
+  left_join(meta_rel %>% rownames_to_column("sample_id"), by = "sample_id") %>%
+  left_join(tax_rel  %>% rownames_to_column("taxon"),     by = "taxon")
+```
+
+# Univariate statistics
+
+## Explore individual taxa
+
+```{r single-taxon, fig.width=10, fig.height=4}
+one_taxon <- unique(dat_rel$taxon)[3]
+# one_taxon <- unique(dat_rel$taxon)[5]
+# one_taxon <- unique(dat_rel$taxon)[20]
+
+# Comparison between disease groups
+# fordelingen af én bakteries relative abundance i hver disease-gruppe
+# Hver prik er en sample 
+dat_rel %>%
+  filter(taxon == one_taxon) %>%
+  ggplot(aes(x = Disease.MESH.ID, y = rel_abund, fill = Disease.MESH.ID)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(width = 0.15, alpha = 0.4) +
+    theme_bw() +
+    labs(title = paste("Taxon", one_taxon, "by disease"))
+
+# Comparison between sexes within T2D
+# om taxon varierer mellem mænd og kvinder blandt kun T2D-patienter
+dat_rel %>%
+  filter(taxon == one_taxon, Disease.MESH.ID == "D003924") %>%
+  ggplot(aes(x = Sex, y = rel_abund, fill = Sex)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(width = 0.15, alpha = 0.4) +
+    theme_bw() +
+    labs(title = paste("Taxon", one_taxon, "by sex (T2D only)"))
+```
+
+## Diagnose the data before testing
+
+### Zero-inflation
+# plottet viser hvor mange taxa der er fraværende (0) i mange samples
+
+```{r zero-inflation, fig.width=10, fig.height=4}
+dat_rel %>%
+  group_by(taxon, Disease.MESH.ID) %>%
+  summarise(prop_zero = mean(rel_abund == 0), .groups = "drop") %>%
+  ggplot(aes(x = prop_zero, fill = Disease.MESH.ID)) +
+    geom_histogram(binwidth = 0.05, color = "white", alpha = 0.7) +
+    scale_fill_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
+    facet_wrap(~ Disease.MESH.ID) +
+    labs(x = "Proportion of samples where relative abundance = 0",
+         y = "Number of taxa",
+         title = "Zero-inflation by disease group") +
+    theme_bw() +
+    theme(legend.position = "none")
+```
+
+
+
+### Right skew on a sample of mid-prevalence taxa
+# hvordan abundance-fordelingen ser ud for taxa der faktisk findes
+# viser at normalfordenlingsantagelse brydes 
+
+```{r right-skew, fig.width=10, fig.height=6}
+set.seed(42)
+example_taxa <- dat_rel %>%
+  filter(Disease.MESH.ID == "D003924") %>%
+  group_by(taxon, Genus, Species) %>%
+  summarise(prop_nonzero = mean(rel_abund > 0), .groups = "drop") %>%
+  filter(prop_nonzero > 0.4, prop_nonzero < 0.9) %>%
+  slice_sample(n = 6) %>%
+  pull(taxon)
+
+dat_rel %>%
+  filter(Disease.MESH.ID == "D003924",
+         taxon %in% example_taxa,
+         rel_abund > 0) %>%
+  mutate(label = Species) %>%
+  ggplot(aes(x = rel_abund)) +
+    geom_histogram(bins = 20, fill = "steelblue", color = "white") +
+    facet_wrap(~ label, scales = "free") +
+    labs(x = "Relative abundance (non-zero values only)",
+         y = "Count",
+         title = "Right-skewed distributions in selected genera (T2D)") +
+    theme_bw()
+
+# y = count --> = hvor mange samples der har den abundance.
+```
+
+### Q-Q plots 
+# undersøger om data er normalfordelt 
+
+```{r qq-plots, fig.width=10, fig.height=6}
+dat_rel %>%
+  filter(Disease.MESH.ID == "D003924", taxon %in% example_taxa) %>%
+  mutate(label = Species) %>%
+  ggplot(aes(sample = rel_abund)) +
+    stat_qq(size = 0.8, alpha = 0.6) +
+    stat_qq_line(color = "red", linetype = "dashed") +
+    facet_wrap(~ label, scales = "free") +
+    labs(x = "Theoretical quantiles (normal)",
+         y = "Sample quantiles",
+         title = "Q–Q plots: departures from normality in selected genera (T2D)") +
+    theme_bw()
+```
+
+Q–Q plottet ser på:
+fordelingen af relative abundances for én taxon
+og sammenligner den med:
+en teoretisk normalfordeling
+
+
+Konklusion: Zero-inflation, right skew and Q-Q curvature together justify rank-based or compositional methods over raw t-tests.
+
+## Wilcoxon rank-sum test
+
+```{r wilcox-results}
+wilcox_results <- dat_rel %>%
+  group_by(taxon, Genus, Species) %>%
+  summarise(
+    p_value      = wilcox.test(rel_abund ~ Disease.MESH.ID, exact = FALSE)$p.value,
+    mean_T2D     = mean(rel_abund[Disease.MESH.ID == "D003924"]),
+    mean_Healthy = mean(rel_abund[Disease.MESH.ID == "D006262"]),
+    log2_fc      = log2((mean_T2D + 1e-6) / (mean_Healthy + 1e-6)),
+    .groups = "drop"
+  ) %>%
+  mutate(q_value = p.adjust(p_value, method = "BH"))
+
+head(wilcox_results, 10)
+```
+
+`log2_fc > 0` → T2D-enriched. `log2_fc < 0` → T2D-depleted.
+
+Der udføres en Wilcoxon rank-sum test for hver taxon mellem T2D og raske samples.
+p_value viser hvor sandsynligt det er, at forskellen mellem grupperne skyldes tilfældighed.
+log2_fc viser effektretningen: positive værdier betyder højere abundance i T2D, negative betyder lavere abundance i T2D.
+q_value er FDR-korrigerede p-værdier og bruges til at kontrollere for multiple testing.
+
+### Top T2D-depleted (Wilcoxon)
+
+```{r wilcox-depleted}
+wilcox_T2D_depleted <- wilcox_results %>%
+  select(taxon, Genus, Species, mean_T2D, mean_Healthy, log2_fc, p_value, q_value) %>%
+  arrange(log2_fc) %>%
+  head(10)
+
+wilcox_T2D_depleted
+```
+Dette er en tabel over de taxa som er mest reducerede i T2D sammenlignet med raske kontroller.
+Taxaene sorteres efter log2_fc, hvor de mest negative værdier vises øverst.
+mean_T2D og mean_Healthy viser den gennemsnitlige relative abundance i hver gruppe.
+En negativ log2_fc betyder at bakterien er mindre abundant i T2D-gruppen.
+p_value og q_value viser hvor statistisk stærk forskellen er efter multiple testing-korrektion.
+
+
+```{r wilcox-depleted-plot, fig.width=6, fig.height=4}
+top_taxon <- wilcox_T2D_depleted %>% slice(1) %>% pull(taxon)
+top_label <- wilcox_T2D_depleted %>% slice(1) %>% pull(Species)
+
+dat_rel %>%
+  filter(taxon == top_taxon) %>%
+  ggplot(aes(x = Disease.MESH.ID, y = rel_abund, fill = Disease.MESH.ID)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(width = 0.15, alpha = 0.4) +
+    scale_fill_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
+    theme_bw() +
+    labs(title = paste("Top T2D-depleted (Wilcoxon):", top_label))
+```
+Dette plot viser den taxon som er mest “depleted” i T2D ifølge Wilcoxon-analysen.
+X-aksen viser disease-grupperne (T2D vs raske), mens y-aksen viser taxonens relative abundance.
+Hver prik repræsenterer ét biologisk sample/individ, og boxplottet opsummerer gruppens fordeling.
+Hvis T2D-gruppen ligger lavere på y-aksen, betyder det at bakterien findes i lavere mængde hos T2D-patienter.
+Plottet bruges til visuelt at vurdere effektstørrelse, variation og overlap mellem grupperne — ikke kun statistisk signifikans.
+
+### Top T2D-enriched (Wilcoxon)
+
+```{r wilcox-enriched}
+wilcox_T2D_enriched <- wilcox_results %>%
+  select(taxon, Genus, Species, mean_T2D, mean_Healthy, log2_fc, p_value, q_value) %>%
+  arrange(-log2_fc) %>%
+  head(10)
+
+wilcox_T2D_enriched
+```
+
+```{r wilcox-enriched-plot, fig.width=6, fig.height=4}
+top_taxon <- wilcox_T2D_enriched %>% slice(1) %>% pull(taxon)
+top_label <- wilcox_T2D_enriched %>% slice(1) %>% pull(Species)
+
+dat_rel %>%
+  filter(taxon == top_taxon) %>%
+  ggplot(aes(x = Disease.MESH.ID, y = rel_abund, fill = Disease.MESH.ID)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(width = 0.15, alpha = 0.4) +
+    scale_fill_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
+    theme_bw() +
+    labs(title = paste("Top T2D-enriched (Wilcoxon):", top_label))
+```
+
+### Volcano plot — Wilcoxon
+
+```{r wilcox-volcano, fig.width=8, fig.height=5}
+wilcox_results %>%
+  mutate(
+    neg_log10_q = -log10(q_value),
+    direction = case_when(
+      q_value < 0.05 & log2_fc > 0 ~ "T2D-enriched",
+      q_value < 0.05 & log2_fc < 0 ~ "T2D-depleted",
+      TRUE                         ~ "Not significant"
+    )
+  ) %>%
+  ggplot(aes(x = log2_fc, y = neg_log10_q, color = direction)) +
+    geom_point(alpha = 0.6, size = 2) +
+    scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
+                                  "T2D-depleted" = "#3498DB",
+                                  "Not significant" = "grey60")) +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+    labs(x = "log2 fold change (T2D vs Healthy)",
+         y = "-log10(q-value)", color = NULL,
+         title = "Wilcoxon: disease effect on relative abundance") +
+    theme_bw()
+```
+Dette er et volcano plot, som bruges til at kombinere effektstørrelse og statistisk signifikans for alle taxa samtidigt.
+X-aksen viser log2 fold change, hvor positive værdier betyder højere abundance i T2D og negative værdier betyder lavere abundance i T2D.
+Y-aksen viser -log10(q-value), så punkter højere oppe er mere statistisk signifikante.
+Hver prik repræsenterer én taxon, og farverne viser om taxa er T2D-enriched, T2D-depleted eller ikke signifikant.
+Plottet bruges til hurtigt at identificere de taxa som både har store biologiske forskelle og stærk statistisk evidens.
+
+# Navne på signifikante
+```{r}
+library(ggrepel)
+
+wilcox_results %>%
+  mutate(
+    neg_log10_q = -log10(q_value),
+
+    direction = case_when(
+      q_value < 0.05 & log2_fc > 0 ~ "T2D-enriched",
+      q_value < 0.05 & log2_fc < 0 ~ "T2D-depleted",
+      TRUE                         ~ "Not significant"
+    ),
+
+    label = ifelse(
+      q_value < 0.05,
+      Species,
+      NA
+    )
+  ) %>%
+
+  ggplot(aes(x = log2_fc,
+             y = neg_log10_q,
+             color = direction)) +
+
+    geom_point(alpha = 0.6,
+               size = 2) +
+
+    geom_text_repel(
+      aes(label = label),
+      size = 3,
+      max.overlaps = 25
+    ) +
+
+    scale_color_manual(
+      values = c(
+        "T2D-enriched" = "#E74C3C",
+        "T2D-depleted" = "#3498DB",
+        "Not significant" = "grey60"
+      )
+    ) +
+
+    geom_hline(
+      yintercept = -log10(0.05),
+      linetype = "dashed",
+      color = "grey40"
+    ) +
+
+    geom_vline(
+      xintercept = 0,
+      linetype = "dashed",
+      color = "grey40"
+    ) +
+
+    labs(
+      x = "log2 fold change (T2D vs Healthy)",
+      y = "-log10(q-value)",
+      color = NULL,
+      title = "Wilcoxon: disease effect on relative abundance"
+    ) +
+
+    theme_bw()
+```
+
+
+### Bar chart of top Wilcoxon hits
+
+```{r wilcox-bar, fig.width=8, fig.height=6}
+bind_rows(
+  wilcox_results %>% filter(q_value < 0.05) %>% arrange(log2_fc)  %>% head(10),
+  wilcox_results %>% filter(q_value < 0.05) %>% arrange(-log2_fc) %>% head(10)
+) %>%
+  distinct() %>%
+  mutate(
+    label = Species,
+    direction = ifelse(log2_fc > 0, "T2D-enriched", "T2D-depleted")
+  ) %>%
+  ggplot(aes(x = reorder(label, -q_value), y = log2_fc, fill = direction)) +
+    geom_col() +
+    coord_flip() +
+    scale_fill_manual(values = c("T2D-enriched" = "#E74C3C", "T2D-depleted" = "#3498DB")) +
+    labs(x = NULL, y = "log2 fold change (T2D vs Healthy)", fill = NULL,
+         title = "Top differentially abundant taxa (Wilcoxon)") +
+    theme_bw()
+```
+
+Dette plot viser de mest differentielt abundante taxa mellem T2D og raske kontroller.
+Hver søjle repræsenterer én taxon/species, og y-aksen viser log2 fold change mellem grupperne.
+Positive værdier betyder at taxon er mere abundant i T2D, mens negative værdier betyder at den er mindre abundant i T2D.
+Farverne adskiller T2D-enriched taxa fra T2D-depleted taxa.
+Plottet bruges til at identificere hvilke bakterier der har de største biologiske forskelle mellem sygdomsgrupperne.
+
+
+## Disease effect using log-transformed linear models
+
+```{r glm-results}
+glm_disease_results <- dat_rel %>%
+  mutate(Disease.MESH.ID = factor(Disease.MESH.ID, levels = c("D006262", "D003924"))) %>%
+  group_by(taxon, Genus, Species) %>%
+  group_modify(~ {
+    fit <- glm(log10(rel_abund + 1e-6) ~ Disease.MESH.ID,
+               data = .x, family = gaussian())
+    broom::tidy(fit)
+  }) %>%
+  ungroup() %>%
+  filter(term == "Disease.MESH.IDD003924") %>%
+  mutate(
+    q_value = p.adjust(p.value, method = "BH"),
+    fold_change_T2D_vs_Healthy = 10^estimate
+  )
+```
+
+Positive estimate = T2D-enriched on the log10 scale.
+
+GLM disease results
+
+Dette er en differential abundance-analyse baseret på lineære modeller på log-transformerede relative abundances.
+Hver taxon analyseres separat for at teste om abundance ændrer sig mellem raske og T2D.
+estimate viser retning og størrelse af sygdomseffekten på log10-skalaen.
+Positive estimates betyder højere abundance i T2D, negative betyder lavere abundance i T2D.
+q_value bruges til at identificere statistisk signifikante taxa efter multiple testing-korrektion.
+
+### Top T2D-depleted (GLM)
+
+```{r glm-depleted}
+glm_T2D_depleted <- glm_disease_results %>%
+  select(taxon, Genus, Species, estimate, fold_change_T2D_vs_Healthy,
+         std.error, statistic, p.value, q_value) %>%
+  arrange(fold_change_T2D_vs_Healthy) %>%
+  head(10)
+
+glm_T2D_depleted
+```
+Denne tabel viser de taxa som er mest reducerede i T2D ifølge GLM-modellen.
+Taxaene sorteres efter laveste fold change mellem T2D og raske.
+fold_change_T2D_vs_Healthy < 1 betyder lavere abundance i T2D.
+Tabellen viser både effektstørrelse og statistisk usikkerhed (std.error, p.value, q_value).
+Den bruges til at identificere potentielt sygdomsassocierede bakterier som er tabt i T2D.
+
+```{r glm-depleted-plot, fig.width=6, fig.height=4}
+top_taxon <- glm_T2D_depleted %>% slice(1) %>% pull(taxon)
+top_label <- glm_T2D_depleted %>% slice(1) %>% pull(Species)
+
+dat_rel %>%
+  filter(taxon == top_taxon) %>%
+  ggplot(aes(x = Disease.MESH.ID, y = rel_abund, fill = Disease.MESH.ID)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(width = 0.15, alpha = 0.4) +
+    scale_fill_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
+    theme_bw() +
+    labs(title = paste("Top T2D-depleted (GLM):", top_label))
+```
+Dette plot viser den mest T2D-depleterede taxon fundet med GLM-analysen.
+X-aksen viser disease-grupperne, mens y-aksen viser taxonens relative abundance.
+Hver prik repræsenterer ét sample, og boxplottet opsummerer gruppens distribution.
+Lavere værdier i T2D-gruppen indikerer at bakterien er mindre abundant hos patienter.
+Plottet bruges til visuelt at validere den statistiske forskel fundet i GLM-analysen.
+
+### Top T2D-enriched (GLM)
+
+```{r glm-enriched}
+glm_T2D_enriched <- glm_disease_results %>%
+  select(taxon, Genus, Species, estimate, fold_change_T2D_vs_Healthy,
+         std.error, statistic, p.value, q_value) %>%
+  arrange(-fold_change_T2D_vs_Healthy) %>%
+  head(10)
+
+glm_T2D_enriched
+```
+Denne tabel viser de taxa som er mest forhøjede i T2D ifølge GLM-modellen.
+Taxaene sorteres efter højeste fold change mellem T2D og raske.
+fold_change_T2D_vs_Healthy > 1 betyder højere abundance i T2D.
+Resultaterne viser hvilke bakterier der potentielt er associeret med sygdomstilstanden.
+Tabellen bruges til at identificere kandidater til sygdomsmarkører eller dysbiose-signaturer.
+
+```{r glm-enriched-plot, fig.width=6, fig.height=4}
+top_taxon <- glm_T2D_enriched %>% slice(1) %>% pull(taxon)
+top_label <- glm_T2D_enriched %>% slice(1) %>% pull(Species)
+
+dat_rel %>%
+  filter(taxon == top_taxon) %>%
+  ggplot(aes(x = Disease.MESH.ID, y = rel_abund, fill = Disease.MESH.ID)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(width = 0.15, alpha = 0.4) +
+    scale_fill_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
+    theme_bw() +
+    labs(title = paste("Top T2D-enriched (GLM):", top_label))
+```
+
+### Volcano plot — GLM (unadjusted)
+
+```{r glm-volcano, fig.width=8, fig.height=5}
+glm_disease_results %>%
+  mutate(
+    neg_log10_q = -log10(q_value),
+    direction = case_when(
+      q_value < 0.05 & estimate > 0 ~ "T2D-enriched",
+      q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
+      TRUE                          ~ "Not significant"
+    )
+  ) %>%
+  ggplot(aes(x = estimate, y = neg_log10_q, color = direction)) +
+    geom_point(alpha = 0.6, size = 2) +
+    scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
+                                  "T2D-depleted" = "#3498DB",
+                                  "Not significant" = "grey60")) +
+  
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+    labs(x = "GLM estimate (log10 RA, T2D vs Healthy)",
+         y = "-log10(q-value)", color = NULL,
+         title = "GLM: disease effect on log10 relative abundance") +
+    theme_bw()
+```
+Dette volcano plot kombinerer effektstørrelse og statistisk signifikans for alle taxa.
+X-aksen viser GLM-estimatet på log10-skalaen, hvor positive værdier betyder højere abundance i T2D.
+Y-aksen viser -log10(q-value), så højere punkter er mere statistisk signifikante.
+Hver prik repræsenterer én taxon, og farverne viser om taxa er enriched, depleted eller ikke signifikante.
+Plottet bruges til hurtigt at identificere taxa med både stærk sygdomseffekt og høj statistisk evidens.
+
+```{r}
+library(ggrepel)
+
+glm_disease_results %>%
+  mutate(
+    neg_log10_q = -log10(q_value),
+
+    direction = case_when(
+      q_value < 0.05 & estimate > 0 ~ "T2D-enriched",
+      q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
+      TRUE                          ~ "Not significant"
+    ),
+
+    label = ifelse(
+      q_value < 0.05,
+      Species,
+      NA
+    )
+  ) %>%
+
+  ggplot(aes(x = estimate,
+             y = neg_log10_q,
+             color = direction)) +
+
+    geom_point(alpha = 0.6,
+               size = 2) +
+
+    geom_text_repel(
+      aes(label = label),
+      size = 3,
+      max.overlaps = 30
+    ) +
+
+    scale_color_manual(
+      values = c(
+        "T2D-enriched" = "#E74C3C",
+        "T2D-depleted" = "#3498DB",
+        "Not significant" = "grey60"
+      )
+    ) +
+
+    geom_hline(
+      yintercept = -log10(0.05),
+      linetype = "dashed",
+      color = "grey40"
+    ) +
+
+    geom_vline(
+      xintercept = 0,
+      linetype = "dashed",
+      color = "grey40"
+    ) +
+
+    labs(
+      x = "GLM estimate (log10 RA, T2D vs Healthy)",
+      y = "-log10(q-value)",
+      color = NULL,
+      title = "GLM: disease effect on log10 relative abundance"
+    ) +
+
+    theme_bw()
+```
+
+
+### Bar chart — GLM top hits
+
+```{r glm-bar, fig.width=8, fig.height=6}
+bind_rows(
+  glm_disease_results %>% filter(q_value < 0.05) %>% arrange(estimate)  %>% head(10),
+  glm_disease_results %>% filter(q_value < 0.05) %>% arrange(-estimate) %>% head(10)
+) %>%
+  distinct() %>%
+  mutate(
+    label = Species,
+    direction = ifelse(estimate > 0, "T2D-enriched", "T2D-depleted")
+  ) %>%
+  ggplot(aes(x = reorder(label, -q_value), y = estimate, fill = direction)) +
+    geom_col() +
+    coord_flip() +
+    scale_fill_manual(values = c("T2D-enriched" = "#E74C3C", "T2D-depleted" = "#3498DB")) +
+    labs(x = NULL, y = "GLM estimate (log10 RA)", fill = NULL,
+         title = "Top differentially abundant taxa (GLM)") +
+    theme_bw()
+```
+
+## Adjust the linear model for Sex
+
+```{r glm-adj-results}
+glm_disease_adjusted_sex_results <- dat_rel %>%
+  mutate(
+    Disease.MESH.ID = factor(Disease.MESH.ID, levels = c("D006262", "D003924")),
+    Sex             = factor(Sex,             levels = c("Female", "Male"))
+  ) %>%
+  group_by(taxon, Genus, Species) %>%
+  group_modify(~ {
+    fit <- glm(log10(rel_abund + 1e-6) ~ Disease.MESH.ID + Sex,
+               data = .x, family = gaussian())
+    broom::tidy(fit)
+  }) %>%
+  ungroup() %>%
+  filter(term == "Disease.MESH.IDD003924") %>%
+  mutate(
+    q_value = p.adjust(p.value, method = "BH"),
+    fold_change_T2D_vs_Healthy_adj = 10^estimate
+  )
+```
+
+### Top T2D-depleted (GLM adjusted for Sex)
+
+```{r glm-adj-depleted}
+glm_adj_T2D_depleted <- glm_disease_adjusted_sex_results %>%
+  select(taxon, Genus, Species, estimate, fold_change_T2D_vs_Healthy_adj,
+         std.error, statistic, p.value, q_value) %>%
+  arrange(fold_change_T2D_vs_Healthy_adj) %>%
+  head(10)
+
+glm_adj_T2D_depleted
+```
+
+```{r glm-adj-depleted-plot, fig.width=6, fig.height=4}
+top_taxon <- glm_adj_T2D_depleted %>% slice(1) %>% pull(taxon)
+top_label <- glm_adj_T2D_depleted %>% slice(1) %>% pull(Species)
+
+dat_rel %>%
+  filter(taxon == top_taxon) %>%
+  ggplot(aes(x = Disease.MESH.ID, y = rel_abund, fill = Disease.MESH.ID)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(width = 0.15, alpha = 0.4) +
+    scale_fill_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
+    theme_bw() +
+    labs(title = paste("Top T2D-depleted (GLM adj. Sex):", top_label))
+```
+
+### Top T2D-enriched (GLM adjusted for Sex)
+
+```{r glm-adj-enriched}
+glm_adj_T2D_enriched <- glm_disease_adjusted_sex_results %>%
+  select(taxon, Genus, Species, estimate, fold_change_T2D_vs_Healthy_adj,
+         std.error, statistic, p.value, q_value) %>%
+  arrange(-fold_change_T2D_vs_Healthy_adj) %>%
+  head(10)
+
+glm_adj_T2D_enriched
+```
+
+```{r glm-adj-enriched-plot, fig.width=6, fig.height=4}
+top_taxon <- glm_adj_T2D_enriched %>% slice(1) %>% pull(taxon)
+top_label <- glm_adj_T2D_enriched %>% slice(1) %>% pull(Species)
+
+dat_rel %>%
+  filter(taxon == top_taxon) %>%
+  ggplot(aes(x = Disease.MESH.ID, y = rel_abund, fill = Disease.MESH.ID)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(width = 0.15, alpha = 0.4) +
+    scale_fill_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
+    theme_bw() +
+    labs(title = paste("Top T2D-enriched (GLM adj. Sex):", top_label))
+```
+
+### Volcano plot — GLM adjusted for Sex
+
+```{r glm-adj-volcano, fig.width=8, fig.height=5}
+glm_disease_adjusted_sex_results %>%
+  mutate(
+    neg_log10_q = -log10(q_value),
+    direction = case_when(
+      q_value < 0.05 & estimate > 0 ~ "T2D-enriched",
+      q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
+      TRUE                          ~ "Not significant"
+    )
+  ) %>%
+  ggplot(aes(x = estimate, y = neg_log10_q, color = direction)) +
+    geom_point(alpha = 0.6, size = 2) +
+    scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
+                                  "T2D-depleted" = "#3498DB",
+                                  "Not significant" = "grey60")) +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+    labs(x = "GLM estimate (log10 RA, T2D vs Healthy)",
+         y = "-log10(q-value)", color = NULL,
+         title = "GLM adjusted for Sex: disease effect") +
+    theme_bw()
+```
+
+### Bar chart — GLM adjusted top hits
+
+```{r glm-adj-bar, fig.width=8, fig.height=6}
+bind_rows(
+  glm_disease_adjusted_sex_results %>% filter(q_value < 0.05) %>% arrange(estimate)  %>% head(10),
+  glm_disease_adjusted_sex_results %>% filter(q_value < 0.05) %>% arrange(-estimate) %>% head(10)
+) %>%
+  distinct() %>%
+  mutate(
+    label = Species,
+    direction = ifelse(estimate > 0, "T2D-enriched", "T2D-depleted")
+  ) %>%
+  ggplot(aes(x = reorder(label, -q_value), y = estimate, fill = direction)) +
+    geom_col() +
+    coord_flip() +
+    scale_fill_manual(values = c("T2D-enriched" = "#E74C3C", "T2D-depleted" = "#3498DB")) +
+    labs(x = NULL, y = "GLM estimate (log10 RA, adjusted)", fill = NULL,
+         title = "Top differentially abundant taxa (GLM adjusted for Sex)") +
+    theme_bw()
+```
+
+## Compositional analysis with CLR transformation
+
+```{r clr-transform}
+ps_clr <- transform_sample_counts(ps_china, function(x) {
+  x <- x + 1e-9
+  log(x) - mean(log(x))
+})
+otu_clr  <- as(otu_table(ps_clr), "matrix") %>% t() %>% as.data.frame()
+meta_clr <- data.frame(sample_data(ps_clr))
+tax_clr  <- as(tax_table(ps_clr), "matrix") %>% as.data.frame()
+```
+
+```{r build-dat-clr, include=FALSE}
+dat_clr <- otu_clr %>%
+  rownames_to_column("sample_id") %>%
+  pivot_longer(-sample_id, names_to = "taxon", values_to = "clr") %>%
+  left_join(meta_clr %>% rownames_to_column("sample_id"), by = "sample_id") %>%
+  left_join(tax_clr  %>% rownames_to_column("taxon"),     by = "taxon")
+```
+
+```{r clr-results}
+clr_disease_adjusted_sex_results <- dat_clr %>%
+  mutate(
+    Disease.MESH.ID = factor(Disease.MESH.ID, levels = c("D006262", "D003924")),
+    Sex             = factor(Sex,             levels = c("Female", "Male"))
+  ) %>%
+  group_by(taxon, Genus, Species) %>%
+  group_modify(~ {
+    fit <- lm(clr ~ Disease.MESH.ID + Sex, data = .x)
+    broom::tidy(fit)
+  }) %>%
+  ungroup() %>%
+  filter(term == "Disease.MESH.IDD003924") %>%
+  mutate(q_value = p.adjust(p.value, method = "BH"))
+```
+
+Positive CLR estimate = T2D-enriched relative to the community geometric mean.
+
+### Top T2D-depleted (CLR)
+
+```{r clr-depleted}
+clr_T2D_depleted <- clr_disease_adjusted_sex_results %>%
+  select(taxon, Genus, Species, estimate, std.error, statistic, p.value, q_value) %>%
+  arrange(estimate) %>%
+  head(10)
+
+clr_T2D_depleted
+```
+
+```{r clr-depleted-plot, fig.width=6, fig.height=4}
+top_taxon <- clr_T2D_depleted %>% slice(1) %>% pull(taxon)
+top_label <- clr_T2D_depleted %>% slice(1) %>% pull(Species)
+
+dat_clr %>%
+  filter(taxon == top_taxon) %>%
+  ggplot(aes(x = Disease.MESH.ID, y = clr, fill = Disease.MESH.ID)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(width = 0.15, alpha = 0.4) +
+    scale_fill_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
+    theme_bw() +
+    labs(title = paste("Top T2D-depleted (CLR):", top_label),
+         y = "CLR-transformed value")
+```
+
+### Top T2D-enriched (CLR)
+
+```{r clr-enriched}
+clr_T2D_enriched <- clr_disease_adjusted_sex_results %>%
+  select(taxon, Genus, Species, estimate, std.error, statistic, p.value, q_value) %>%
+  arrange(-estimate) %>%
+  head(10)
+
+clr_T2D_enriched
+```
+
+```{r clr-enriched-plot, fig.width=6, fig.height=4}
+top_taxon <- clr_T2D_enriched %>% slice(1) %>% pull(taxon)
+top_label <- clr_T2D_enriched %>% slice(1) %>% pull(Species)
+
+dat_clr %>%
+  filter(taxon == top_taxon) %>%
+  ggplot(aes(x = Disease.MESH.ID, y = clr, fill = Disease.MESH.ID)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(width = 0.15, alpha = 0.4) +
+    scale_fill_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
+    theme_bw() +
+    labs(title = paste("Top T2D-enriched (CLR):", top_label),
+         y = "CLR-transformed value")
+```
+
+### Volcano plot — CLR
+
+```{r clr-volcano, fig.width=8, fig.height=5}
+clr_disease_adjusted_sex_results %>%
+  mutate(
+    neg_log10_q = -log10(q_value),
+    direction = case_when(
+      q_value < 0.05 & estimate > 0 ~ "T2D-enriched",
+      q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
+      TRUE                          ~ "Not significant"
+    )
+  ) %>%
+  ggplot(aes(x = estimate, y = neg_log10_q, color = direction)) +
+    geom_point(alpha = 0.6, size = 2) +
+    scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
+                                  "T2D-depleted" = "#3498DB",
+                                  "Not significant" = "grey60")) +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+    labs(x = "CLR estimate (T2D vs Healthy)",
+         y = "-log10(q-value)", color = NULL,
+         title = "Compositional (CLR) analysis: disease effect") +
+    theme_bw()
+```
+
+### Bar chart — CLR top hits
+
+```{r clr-bar, fig.width=8, fig.height=6}
+bind_rows(
+  clr_disease_adjusted_sex_results %>% filter(q_value < 0.05) %>% arrange(estimate)  %>% head(10),
+  clr_disease_adjusted_sex_results %>% filter(q_value < 0.05) %>% arrange(-estimate) %>% head(10)
+) %>%
+  distinct() %>%
+  mutate(
+    label = Species,
+    direction = ifelse(estimate > 0, "T2D-enriched", "T2D-depleted")
+  ) %>%
+  ggplot(aes(x = reorder(label, -q_value), y = estimate, fill = direction)) +
+    geom_col() +
+    coord_flip() +
+    scale_fill_manual(values = c("T2D-enriched" = "#E74C3C", "T2D-depleted" = "#3498DB")) +
+    labs(x = NULL, y = "CLR estimate (T2D vs Healthy)", fill = NULL,
+         title = "Top differentially abundant taxa (CLR)") +
+    theme_bw()
+```
+
+## Compare differential abundance methods
+Dette er en sammenlignende analyse, hvor man undersøger om forskellige statistiske metoder finder de samme biologiske signaler.
+
+X- og Y-aksen i de fleste plots viser effektstørrelser (retning og styrke) fra forskellige metoder (Wilcoxon, GLM, CLR), mens farver eller grupper viser signifikans eller metodeoverlap.
+
+```{r comparison-build, include=FALSE}
+comparison_results <- wilcox_results %>%
+  select(taxon, Genus, Species,
+         wilcox_log2fc = log2_fc,
+         wilcox_q = q_value) %>%
+  left_join(
+    glm_disease_results %>%
+      select(taxon, glm_estimate = estimate, glm_q = q_value),
+    by = "taxon"
+  ) %>%
+  left_join(
+    glm_disease_adjusted_sex_results %>%
+      select(taxon, glm_adj_estimate = estimate, glm_adj_q = q_value),
+    by = "taxon"
+  ) %>%
+  left_join(
+    clr_disease_adjusted_sex_results %>%
+      select(taxon, clr_estimate = estimate, clr_q = q_value),
+    by = "taxon"
+  )
+```
+
+
+### Significant taxa per method
+
+```{r sig-summary}
+sig_summary <- tibble(
+  method = c("Wilcoxon", "GLM", "GLM adjusted (Sex)", "CLR adjusted (Sex)"),
+  n_significant = c(
+    sum(wilcox_results$q_value < 0.05, na.rm = TRUE),
+    sum(glm_disease_results$q_value < 0.05, na.rm = TRUE),
+    sum(glm_disease_adjusted_sex_results$q_value < 0.05, na.rm = TRUE),
+    sum(clr_disease_adjusted_sex_results$q_value < 0.05, na.rm = TRUE)
+  )
+)
+
+sig_summary
+```
+Dette er ikke et plot men en opsummering af hvor mange taxa hver metode finder signifikante.
+
+Hver række = én metode (Wilcoxon, GLM osv.)
+n_significant = antal taxa med q < 0.05
+Bruges til at sammenligne hvor “streng” eller “sensitiv” hver metode er
+
+
+### Taxa significant in all four methods
+
+```{r all-methods-sig}
+all_methods_sig <- comparison_results %>%
+  filter(wilcox_q < 0.05, glm_q < 0.05, glm_adj_q < 0.05, clr_q < 0.05) %>%
+  select(Genus, Species, wilcox_q, glm_q, glm_adj_q, clr_q) %>%
+  arrange(wilcox_q)
+
+all_methods_sig
+```
+Hver række = én taxon (Genus/Species)
+Kolonner = q-values fra hver metode
+Viser “robuste hits” som er signifikante uanset metode
+Bruges til at finde de mest pålidelige biologiske signaler
+
+
+### GLM unadjusted vs adjusted for Sex
+
+```{r glm-vs-glm-adj, fig.width=6, fig.height=5}
+comparison_results %>%
+  ggplot(aes(x = glm_estimate, y = glm_adj_estimate)) +
+    geom_point(alpha = 0.5) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+    labs(x = "GLM estimate (unadjusted)",
+         y = "GLM estimate (adjusted for Sex)",
+         title = "Effect of adjusting for Sex") +
+    theme_bw()
+```
+X-akse: effekt fra GLM uden kønsjustering
+Y-akse: effekt fra GLM med kønsjustering
+Hver prik = én taxon
+
+Bruges til at se:
+
+om køn påvirker resultaterne
+om signalet er stabilt eller confounded
+
+### GLM adjusted vs CLR
+
+```{r glm-adj-vs-clr, fig.width=6, fig.height=5}
+comparison_results %>%
+  ggplot(aes(x = glm_adj_estimate, y = clr_estimate)) +
+    geom_point(alpha = 0.5) +
+    geom_smooth(method = "lm", se = FALSE, color = "blue") +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    labs(x = "GLM estimate (adjusted, log10 RA)",
+         y = "CLR estimate (adjusted)",
+         title = "GLM vs compositional (CLR) effect sizes") +
+    theme_bw()
+```
+
+X-akse: GLM effekt (log10 relative abundance)
+Y-akse: CLR-baseret effekt (compositional data metode)
+Hver prik = én taxon
+
+Bruges til:
+
+at sammenligne klassisk og compositional statistik
+se om resultater er robuste til datatransformation
+
+### Concordance across methods
+
+```{r concordance, fig.width=6, fig.height=4}
+comparison_results %>%
+  mutate(
+    sig_wilcox  = wilcox_q  < 0.05,
+    sig_glm     = glm_q     < 0.05,
+    sig_glm_adj = glm_adj_q < 0.05,
+    sig_clr     = clr_q     < 0.05,
+    n_methods_significant = sig_wilcox + sig_glm + sig_glm_adj + sig_clr
+  ) %>%
+  count(n_methods_significant) %>%
+  filter(!is.na(n_methods_significant)) %>%
+  ggplot(aes(x = factor(n_methods_significant), y = n)) +
+    geom_col(fill = "steelblue") +
+    labs(x = "Number of methods detecting significance (q < 0.05)",
+         y = "Number of taxa",
+         title = "Concordance of significance across methods") +
+    theme_bw()
+```
+
+X-akse: antal metoder hvor en taxon er signifikant (0–4)
+Y-akse: antal taxa
+Hver søjle = hvor mange taxa der er fundet af 0, 1, 2, 3 eller 4 metoder
+
+Bruges til:
+
+at vurdere konsistens mellem metoder
+høj konsensus = mere robuste fund
+
+### Significance × direction heatmap
+
+```{r heatmap, fig.width=6, fig.height=6}
+heatmap_data <- comparison_results %>%
+  filter(wilcox_q < 0.05 | glm_q < 0.05 | glm_adj_q < 0.05 | clr_q < 0.05) %>%
+  mutate(label = Species) %>%
+  select(label,
+         wilcox_q, glm_q, glm_adj_q, clr_q,
+         wilcox_log2fc, glm_estimate, glm_adj_estimate, clr_estimate) %>%
+  pivot_longer(cols = c(wilcox_q, glm_q, glm_adj_q, clr_q),
+               names_to = "method", values_to = "q_value") %>%
+  mutate(
+    direction = case_when(
+      method == "wilcox_q"  ~ wilcox_log2fc,
+      method == "glm_q"     ~ glm_estimate,
+      method == "glm_adj_q" ~ glm_adj_estimate,
+      method == "clr_q"     ~ clr_estimate
+    ),
+    signed_neg_log10_q = sign(direction) * pmin(-log10(q_value), 10),
+    method = factor(method,
+                    levels = c("wilcox_q", "glm_q", "glm_adj_q", "clr_q"),
+                    labels = c("Wilcoxon", "GLM", "GLM adj.", "CLR adj."))
+  )
+
+taxon_order <- heatmap_data %>%
+  group_by(label) %>%
+  summarise(mean_signed = mean(signed_neg_log10_q, na.rm = TRUE), .groups = "drop") %>%
+  arrange(mean_signed) %>%
+  pull(label)
+
+heatmap_data %>%
+  mutate(label = factor(label, levels = taxon_order)) %>%
+  ggplot(aes(x = method, y = label, fill = signed_neg_log10_q)) +
+    geom_tile(color = "white", linewidth = 0.5) +
+    geom_text(aes(label = ifelse(q_value < 0.05, "*", "")),
+              color = "black", size = 3) +
+    scale_fill_gradient2(
+      low = "#3498DB", mid = "white", high = "#C0392B",
+      midpoint = 0, limits = c(-10, 10),
+      name = "Signed\n-log10(q)",
+      breaks = c(-10, -5, 0, 5, 10),
+      labels = c("-10\n(T2D-depleted)", "-5", "0", "5", "10\n(T2D-enriched)")
+    ) +
+    labs(x = "Method", y = "Taxon",
+         title = "Significance and direction across methods (* = q < 0.05)",
+         subtitle = "Blue = T2D-depleted, Red = T2D-enriched") +
+    theme_bw() +
+    theme(axis.text.y = element_text(size = 7))
+```
+X-akse: metode (Wilcoxon, GLM, CLR osv.)
+Y-akse: taxa (Species)
+Farve: effekt + signifikans (blå = T2D-depleted, rød = T2D-enriched)
+Stjerne (*) = signifikant ved q < 0.05
+
+Bruges til:
+
+at se mønstre på tværs af alle metoder
+identificere taxa med konsistent retning
+
+
+### Wilcoxon vs CLR — sign agreement
+
+```{r wilcox-vs-clr, fig.width=7, fig.height=5}
+comparison_results %>%
+  mutate(
+    sig_category = case_when(
+      wilcox_q < 0.05 & clr_q < 0.05 ~ "Both significant",
+      wilcox_q < 0.05                ~ "Wilcoxon only",
+      clr_q < 0.05                   ~ "CLR only",
+      TRUE                           ~ "Not significant"
+    )
+  ) %>%
+  ggplot(aes(x = wilcox_log2fc, y = clr_estimate, color = sig_category)) +
+    geom_point(alpha = 0.6, size = 2) +
+    scale_color_manual(values = c(
+      "Both significant" = "#E74C3C",
+      "Wilcoxon only"    = "#E67E22",
+      "CLR only"         = "#3498DB",
+      "Not significant"  = "grey70"
+    )) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+    labs(x = "Wilcoxon log2 FC (T2D vs Healthy)",
+         y = "CLR estimate (T2D vs Healthy)",
+         color = NULL,
+         title = "Effect size agreement: Wilcoxon vs CLR") +
+    theme_bw()
+```
+X-akse: Wilcoxon effect size (log2 FC)
+Y-akse: CLR effect size
+Hver prik = én taxon
+Farver = om den er signifikant i én, begge eller ingen metoder
+
+Bruges til:
+
+at vurdere om simple og compositional metoder giver samme biologiske konklusioner
+se robusthed af resultater
+
+# Multivariate statistics
+
+## PCA of CLR-transformed profiles
+
+```{r pca, fig.width=7, fig.height=5}
+clr_mat  <- otu_clr %>% as.matrix()
+meta_pca <- meta_clr[rownames(clr_mat), ]
+
+clr_pca <- prcomp(clr_mat, center = TRUE, scale. = FALSE)
+
+pca_scores <- as.data.frame(clr_pca$x[, 1:2]) %>%
+  rownames_to_column("sample_id") %>%
+  left_join(meta_pca %>% rownames_to_column("sample_id"), by = "sample_id")
+
+pca_var <- round(100 * clr_pca$sdev^2 / sum(clr_pca$sdev^2), 1)
+
+pca_scores %>%
+  ggplot(aes(x = PC1, y = PC2, color = Disease.MESH.ID, shape = Sex)) +
+    geom_point(size = 3, alpha = 0.85) +
+    scale_color_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
+    scale_shape_manual(values = c("Female" = 16, "Male" = 17)) +
+    labs(x = paste0("PC1 (", pca_var[1], "%)"),
+         y = paste0("PC2 (", pca_var[2], "%)"),
+         color = "Disease", shape = "Sex",
+         title = "PCA of CLR-transformed genus profiles") +
+    theme_bw()
+```
+PCA er en usuperviseret metode.
+Den ved ikke hvilke samples der er T2D eller raske.
+Den spørger blot:
+"Hvordan varierer mikrobiomsammensætningen mest på tværs af alle samples?"
+
+## Constrained ordination with RDA
+RDA:
+"Hvor meget af variationen kan forklares af sygdom og køn?"
+RDA er derfor en superviseret PCA
+
+```{r rda-fit}
+rda_disease <- rda(clr_mat ~ Disease.MESH.ID + Sex, data = meta_pca)
+# Forklar mikrobiomets variation ved hjælp af sygdom og køn.
+```
+
+### Permutation tests
+
+```{r rda-anova}
+anova(rda_disease, permutations = 999) # Tester: Forklarer sygdom + køn mere variation end tilfældigheder?
+anova(rda_disease, by = "term", permutations = 999) # tester: tester separat: sygdomseffekt og kønseffekt
+```
+A significant disease term supports a community-level disease effect after accounting for sex.
+
+### Top RDA1 taxa
+
+```{r rda-taxa}
+rda_site_scores_raw <- scores(rda_disease, display = "sites")
+rda1_sign <- ifelse(
+  mean(rda_site_scores_raw[meta_pca$Disease.MESH.ID == "D003924", "RDA1"], na.rm = TRUE) >=
+    mean(rda_site_scores_raw[meta_pca$Disease.MESH.ID == "D006262", "RDA1"], na.rm = TRUE),
+  1, -1
+)
+
+taxon_scores <- scores(rda_disease, display = "species")[, 1] * rda1_sign
+
+rda_taxa <- tibble(
+  taxon        = names(taxon_scores),
+  rda1_loading = taxon_scores
+) %>%
+  arrange(desc(abs(rda1_loading)))
+```
+
+### RDA biplot
+
+```{r rda-biplot, fig.width=8, fig.height=6}
+eig <- rda_disease$CCA$eig
+pct1 <- round(eig[1] / rda_disease$tot.chi * 100, 1)
+pct2 <- round(eig[2] / rda_disease$tot.chi * 100, 1)
+
+site_scores <- scores(rda_disease, display = "sites") %>%
+  as.data.frame() %>%
+  mutate(RDA1 = RDA1 * rda1_sign) %>%
+  rownames_to_column("sample_id") %>%
+  left_join(meta_pca %>% rownames_to_column("sample_id"), by = "sample_id")
+
+biplot_scores <- scores(rda_disease, display = "bp") %>%
+  as.data.frame() %>%
+  mutate(RDA1 = RDA1 * rda1_sign) %>%
+  rownames_to_column("variable")
+
+top_species_scores <- scores(rda_disease, display = "species") %>%
+  as.data.frame() %>%
+  mutate(RDA1 = RDA1 * rda1_sign) %>%
+  rownames_to_column("taxon") %>%
+  inner_join(rda_taxa %>% head(10), by = "taxon") %>%
+  left_join(tax_clr %>% rownames_to_column("taxon"), by = "taxon") %>%
+  mutate(label = Species)
+
+site_range    <- max(abs(c(site_scores$RDA1, site_scores$RDA2)))
+arrow_scale   <- site_range * 0.8 / max(sqrt(biplot_scores$RDA1^2 + biplot_scores$RDA2^2))
+species_scale <- site_range * 0.6 / max(sqrt(top_species_scores$RDA1^2 + top_species_scores$RDA2^2))
+
+biplot_scores      <- biplot_scores      %>% mutate(RDA1 = RDA1 * arrow_scale,   RDA2 = RDA2 * arrow_scale)
+top_species_scores <- top_species_scores %>% mutate(RDA1 = RDA1 * species_scale, RDA2 = RDA2 * species_scale)
+
+ggplot() +
+  geom_point(data = site_scores,
+             aes(x = RDA1, y = RDA2, color = Disease.MESH.ID, shape = Sex),
+             size = 3, alpha = 0.85) +
+  geom_segment(data = top_species_scores,
+               aes(x = 0, y = 0, xend = RDA1, yend = RDA2),
+               arrow = arrow(length = unit(0.15, "cm")),
+               color = "grey70", linewidth = 0.5) +
+  geom_text(data = top_species_scores,
+            aes(x = RDA1 * 1.15, y = RDA2 * 1.15, label = label),
+            size = 2.5, color = "grey50") +
+  geom_segment(data = biplot_scores,
+               aes(x = 0, y = 0, xend = RDA1, yend = RDA2),
+               arrow = arrow(length = unit(0.25, "cm")),
+               color = "black", linewidth = 1) +
+  geom_text(data = biplot_scores,
+            aes(x = RDA1 * 1.15, y = RDA2 * 1.15, label = variable),
+            size = 3.5, fontface = "bold", color = "black") +
+  scale_color_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
+  scale_shape_manual(values = c("Female" = 16, "Male" = 17)) +
+  labs(x = paste0("RDA1 (", pct1, "% of total variance)"),
+       y = paste0("RDA2 (", pct2, "% of total variance)"),
+       color = "Disease", shape = "Sex",
+       title = "RDA biplot: gut microbiome constrained by Disease and Sex") +
+  theme_bw()
+```
+Dette plot viser den del af mikrobiomvariation, som kan forklares af sygdom og køn.
+Hver prik er ét sample, mens pile repræsenterer forklarende variable og bakterier.
+X-aksen (RDA1) og Y-aksen (RDA2) er de vigtigste sygdoms-/kønsrelaterede akser.
+Lange pile indikerer stærke associationer med mikrobiomsammensætningen.
+Plottet bruges til at identificere hvilke bakterier og faktorer der driver forskelle mellem grupper.
+
+### Top 20 taxa by RDA1 loading
+
+```{r rda-loadings, fig.width=8, fig.height=6}
+rda_taxa %>%
+  head(20) %>%
+  left_join(tax_clr %>% rownames_to_column("taxon"), by = "taxon") %>%
+  mutate(
+    label     = Species,
+    direction = ifelse(rda1_loading > 0, "T2D-associated", "Healthy-associated")
+  ) %>%
+  ggplot(aes(x = reorder(label, rda1_loading), y = rda1_loading, fill = direction)) +
+    geom_col() +
+    coord_flip() +
+    scale_fill_manual(values = c("T2D-associated"     = "#E74C3C",
+                                 "Healthy-associated" = "#3498DB")) +
+    labs(x = NULL, y = "RDA1 loading", fill = NULL,
+         title = "Top 20 taxa by RDA1 loading magnitude") +
+    theme_bw()
+```
+Hvilke bakterier driver mest af sygdomsseparationen?
+
+### RDA loadings vs CLR univariate estimates
+
+```{r rda-vs-clr, fig.width=7, fig.height=5}
+rda_clr_comparison <- rda_taxa %>%
+  left_join(
+    clr_disease_adjusted_sex_results %>%
+      select(taxon, Genus, Species,
+             clr_estimate = estimate,
+             clr_q = q_value),
+    by = "taxon"
+  ) %>%
+  mutate(
+    direction_agreement = sign(rda1_loading) == sign(clr_estimate),
+    clr_result = case_when(
+      clr_q < 0.05 & direction_agreement ~ "CLR significant, same direction",
+      clr_q < 0.05                       ~ "CLR significant, opposite direction",
+      TRUE                               ~ "CLR not significant"
+    )
+  )
+
+rda_clr_comparison %>%
+  ggplot(aes(x = clr_estimate, y = rda1_loading, color = clr_result)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+    geom_point(alpha = 0.65, size = 2) +
+    scale_color_manual(values = c(
+      "CLR significant, same direction"     = "#2E8B57",
+      "CLR significant, opposite direction" = "#E67E22",
+      "CLR not significant"                 = "grey70"
+    )) +
+    labs(x = "CLR disease estimate (T2D vs Healthy)",
+         y = "RDA1 loading (positive = T2D-associated)",
+         color = NULL,
+         title = "RDA loadings vs CLR univariate disease effects") +
+    theme_bw()
+```
+
+### Top 20 RDA loading taxa with their CLR statistics
+Det viser ikke bare at mikrobiomet er forskelligt mellem T2D og raske, men også hvilke bakterier der driver forskellen.
+
+```{r rda-clr-table}
+rda_clr_comparison %>%
+  arrange(desc(abs(rda1_loading))) %>%
+  select(Genus, Species, rda1_loading, clr_estimate, clr_q, direction_agreement) %>%
+  head(20)
+```

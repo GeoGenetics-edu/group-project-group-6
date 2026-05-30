@@ -1,0 +1,537 @@
+---
+title: "Microbiome Analysis Workflow"
+output: html_document
+---
+
+# Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+# Load libraries
+
+```{r}
+library(phyloseq)
+library(ggplot2)
+library(vegan)
+library(dplyr)
+library(tibble)
+library(pheatmap)
+library(ggh4x)
+library(ggrepel)
+library(microbiome)
+```
+
+# Load data
+
+```{r}
+load("~/group-project-group-6/project/data/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
+
+ps <- pylsq
+rm(pylsq)
+```
+
+# Inspect phyloseq object
+
+```{r}
+ps
+```
+
+# Sample variables
+
+```{r}
+sample_variables(ps)
+```
+
+# Taxonomic ranks
+
+```{r}
+rank_names(ps)
+```
+
+# Disease distribution
+
+```{r}
+table(sample_data(ps)$Disease.MESH.ID)
+```
+
+# Project distribution
+
+```{r}
+table(sample_data(ps)$Project.ID)
+```
+
+# Disease by project
+
+```{r}
+table(sample_data(ps)$Project.ID,
+      sample_data(ps)$Disease.MESH.ID)
+```
+
+# Country by project
+
+```{r}
+table(sample_data(ps)$Country,
+      sample_data(ps)$Project.ID)
+```
+
+# Sample sums
+
+```{r}
+summary(sample_sums(ps))
+```
+
+# Histogram of sample sums
+
+```{r}
+hist(
+  sample_sums(ps),
+  breaks = 30,
+  main = "Sample sums",
+  xlab = "Sample sum"
+)
+```
+
+# Relative abundance transformation
+
+Although the data already appears normalized, this step rescales each sample to sum to 1.
+
+```{r}
+ps_rel <- transform_sample_counts(
+  ps,
+  function(x) x / sum(x)
+)
+```
+
+# Bray-Curtis distance
+
+```{r}
+bray_dist <- distance(
+  ps_rel,
+  method = "bray"
+)
+```
+
+# PCoA ordination
+
+```{r}
+ord_bray <- ordinate(
+  ps_rel,
+  method = "PCoA",
+  distance = bray_dist
+)
+```
+
+# PCoA colored by project
+
+```{r fig.width=8, fig.height=5}
+plot_ordination(
+  ps_rel,
+  ord_bray,
+  color = "Project.ID"
+) +
+  geom_point(size = 3,
+             alpha = 0.7) +
+  stat_ellipse() +
+  theme_bw() +
+  labs(
+    title = "PCoA by Project",
+    subtitle = "Bray-Curtis distance"
+  )
+```
+
+# PCoA colored by disease
+
+```{r fig.width=8, fig.height=5}
+plot_ordination(
+  ps_rel,
+  ord_bray,
+  color = "Disease.MESH.ID",
+  shape = "Project.ID"
+) +
+  geom_point(size = 3,
+             alpha = 0.8) +
+  stat_ellipse(aes(group = Disease.MESH.ID)) +
+  theme_bw()
+```
+
+# PCoA faceted by project
+
+```{r fig.width=10, fig.height=5}
+plot_ordination(
+  ps_rel,
+  ord_bray,
+  color = "Disease.MESH.ID"
+) +
+  geom_point(size = 3) +
+  facet_wrap(~Project.ID) +
+  theme_bw()
+```
+
+# PERMANOVA
+
+```{r}
+sample_df <- sample_data(ps_rel) |>
+  data.frame()
+
+adonis2(
+  bray_dist ~ Project.ID + Disease.MESH.ID,
+  data = sample_df,
+  permutations = 999,
+  by = "margin"
+)
+```
+
+# Dispersion test
+
+```{r}
+disp_project <- betadisper(
+  bray_dist,
+  sample_df$Project.ID
+)
+
+anova(disp_project)
+
+permutest(disp_project)
+```
+
+# Dispersion boxplot
+
+```{r}
+boxplot(disp_project)
+```
+
+# Alpha diversity
+
+```{r}
+alpha_div <- estimate_richness(
+  ps_rel,
+  measures = c("Shannon", "Simpson")
+)
+
+alpha_div$Disease <- sample_data(ps_rel)$Disease.MESH.ID
+alpha_div$Project <- sample_data(ps_rel)$Project.ID
+```
+
+# Shannon diversity
+
+```{r}
+ggplot(
+  alpha_div,
+  aes(x = Disease,
+      y = Shannon,
+      fill = Disease)
+) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2,
+              alpha = 0.5) +
+  theme_bw()
+```
+
+# Kruskal-Wallis test
+
+```{r}
+kruskal.test(
+  Shannon ~ Disease,
+  data = alpha_div
+)
+```
+
+# Aggregate to genus level
+
+```{r}
+ps_genus <- tax_glom(
+  ps_rel,
+  taxrank = "Genus"
+)
+```
+
+# Top 10 genera
+
+```{r}
+top10 <- names(sort(
+  taxa_sums(ps_genus),
+  decreasing = TRUE
+))[1:10]
+
+ps_top <- prune_taxa(
+  top10,
+  ps_genus
+)
+```
+
+# Merge samples by disease
+
+```{r}
+ps_disease <- merge_samples(
+  ps_top,
+  group = "Disease.MESH.ID"
+)
+
+ps_disease <- transform_sample_counts(
+  ps_disease,
+  function(x) x / sum(x)
+)
+```
+
+# Stacked barplot
+
+```{r fig.width=8, fig.height=5}
+plot_bar(
+  ps_disease,
+  fill = "Genus"
+) +
+  theme_bw() +
+  labs(title = "Top 10 genera by disease group")
+```
+
+# Extract OTU table
+
+```{r}
+otu <- as.data.frame(
+  otu_table(ps_rel)
+)
+
+if(taxa_are_rows(ps_rel)){
+  otu <- t(otu)
+}
+
+otu <- as.data.frame(otu)
+```
+
+# Extract metadata
+
+```{r}
+meta <- sample_data(ps_rel) |>
+  data.frame()
+
+otu$Disease <- meta[
+  rownames(otu),
+  "Disease.MESH.ID"
+]
+```
+
+# Differential abundance analysis
+
+```{r}
+results <- data.frame()
+
+taxa <- setdiff(
+  colnames(otu),
+  "Disease"
+)
+
+for(tax in taxa){
+
+  vals <- otu[[tax]]
+
+  if(length(unique(vals)) < 2){
+    next
+  }
+
+  if(sum(vals) == 0){
+    next
+  }
+
+  test <- tryCatch(
+    wilcox.test(vals ~ otu$Disease),
+    error = function(e) NULL
+  )
+
+  if(!is.null(test)){
+
+    group1 <- unique(otu$Disease)[1]
+    group2 <- unique(otu$Disease)[2]
+
+    median1 <- median(
+      vals[otu$Disease == group1],
+      na.rm = TRUE
+    )
+
+    median2 <- median(
+      vals[otu$Disease == group2],
+      na.rm = TRUE
+    )
+
+    log2FC <- log2(
+      (median2 + 1e-6) /
+      (median1 + 1e-6)
+    )
+
+    results <- rbind(
+      results,
+      data.frame(
+        Taxon = tax,
+        pvalue = test$p.value,
+        log2FC = log2FC
+      )
+    )
+  }
+}
+
+results$padj <- p.adjust(
+  results$pvalue,
+  method = "BH"
+)
+
+results <- results |>
+  arrange(padj)
+
+head(results)
+```
+
+# Volcano plot
+
+```{r fig.width=7, fig.height=5}
+results$logp <- -log10(results$padj)
+
+ggplot(
+  results,
+  aes(x = log2FC,
+      y = logp)
+) +
+  geom_point(alpha = 0.7) +
+  geom_hline(
+    yintercept = -log10(0.05),
+    linetype = "dashed"
+  ) +
+  theme_bw() +
+  labs(
+    title = "Differential abundance",
+    x = "log2 fold change",
+    y = "-log10 adjusted p-value"
+  )
+```
+
+# Heatmap of top taxa
+
+```{r fig.width=8, fig.height=8}
+top_taxa <- results |>
+  filter(padj < 0.05) |>
+  slice_head(n = 20) |>
+  pull(Taxon)
+
+if(length(top_taxa) < 20){
+
+  top_taxa <- results |>
+    slice_head(n = 20) |>
+    pull(Taxon)
+}
+
+mat <- otu[, top_taxa]
+
+mat_scaled <- scale(mat)
+
+annotation <- data.frame(
+  Disease = otu$Disease
+)
+
+rownames(annotation) <- rownames(otu)
+
+pheatmap(
+  t(mat_scaled),
+  annotation_col = annotation,
+  show_colnames = FALSE,
+  fontsize_row = 8
+)
+```
+
+# China-only subset analysis
+
+```{r}
+ps_china <- subset_samples(
+  ps_rel,
+  Project.ID == "PRJNA422434"
+)
+```
+
+# China-only Bray-Curtis
+
+```{r}
+bray_china <- distance(
+  ps_china,
+  method = "bray"
+)
+```
+
+# China-only ordination
+
+```{r}
+ord_china <- ordinate(
+  ps_china,
+  method = "PCoA",
+  distance = bray_china
+)
+```
+
+# China-only PCoA
+
+```{r fig.width=7, fig.height=5}
+plot_ordination(
+  ps_china,
+  ord_china,
+  color = "Disease.MESH.ID"
+) +
+  geom_point(size = 3) +
+  stat_ellipse() +
+  theme_bw()
+```
+
+# China-only PERMANOVA
+
+```{r}
+sample_china <- sample_data(ps_china) |>
+  data.frame()
+
+adonis2(
+  bray_china ~ Disease.MESH.ID,
+  data = sample_china,
+  permutations = 999
+)
+```
+
+# CLR transformation
+
+```{r}
+ps_clr <- microbiome::transform(
+  ps,
+  "clr"
+)
+```
+
+# Euclidean distance on CLR-transformed data
+
+```{r}
+clr_dist <- distance(
+  ps_clr,
+  method = "euclidean"
+)
+```
+
+# CLR PCoA
+
+```{r}
+ord_clr <- ordinate(
+  ps_clr,
+  method = "PCoA",
+  distance = clr_dist
+)
+```
+
+# CLR ordination plot
+
+```{r fig.width=8, fig.height=5}
+plot_ordination(
+  ps_clr,
+  ord_clr,
+  color = "Disease.MESH.ID",
+  shape = "Project.ID"
+) +
+  geom_point(size = 3) +
+  theme_bw()
+```

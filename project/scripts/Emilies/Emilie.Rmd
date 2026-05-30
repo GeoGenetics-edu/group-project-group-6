@@ -140,7 +140,7 @@ plot_richness(
 )
 ```
 
-The code below calculates both Shannon diversity and Observed richness separately, converts the sample names into an explicit column (sample_id), extracts the sample metadata, and finally merges everything into a single table.
+The code below calculates both Shannon diversity, converts the sample names into an explicit column (sample_id), extracts the sample metadata, and finally merges everything into a single table.
 
 
 ```{r}

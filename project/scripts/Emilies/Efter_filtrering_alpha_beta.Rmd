@@ -20,8 +20,8 @@ library(tibble)
 
 # Load phyloseq  - rå data 
 ```{r}
-load("project/data/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
-ps_genus <- pylsq
+load("project/data/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
+ps_species <- pylsq
 rm(pylsq) # fjerne pylsq, så man kan have mere end et. 
 
 # Undersøger de to phylseq
@@ -30,7 +30,7 @@ ps_genus
 
 # Kun kina 
 ```{r}
-ps_china <- subset_samples(ps_genus,
+ps_china <- subset_samples(ps_species,
                            Project.ID == "PRJNA422434")
 ```
 
@@ -68,8 +68,26 @@ plot_richness(
   ps_china,
   measures = c("Shannon"),
   x = "Disease.MESH.ID"
-) +
+) + 
   geom_boxplot(alpha = 0.6) +
+  theme_bw()
+
+plot_richness(
+  ps_china,
+  measures = c("Shannon", "Simpson"),
+  x = "Disease.MESH.ID"
+) +
+  geom_boxplot(aes(fill = Disease.MESH.ID), alpha = 0.6) +
+  scale_x_discrete(
+    limits = c("D006262", "D003924"),
+    labels = c("D006262" = "Control", "D003924" = "T2D")
+  ) +
+  scale_fill_manual(
+    values = c("D006262" = "blue", "D003924" = "red"),
+    labels = c("D006262" = "Control", "D003924" = "T2D"),
+    name   = "Group"
+  ) +
+  labs(x = "Group") +
   theme_bw()
 ```
 # Statestik af alpha 
@@ -178,6 +196,175 @@ p = 0.236
 
 Det betyder: XXXXX
 
+
+
+```{r}
+# =========================
+# Differential abundance analysis
+# Robust version for phyloseq
+# =========================
+
+library(phyloseq)
+library(dplyr)
+library(ggplot2)
+library(pheatmap)
+
+# ---------------------------------
+# 1. Extract OTU table correctly
+# ---------------------------------
+
+otu <- as.data.frame(otu_table(ps_china))
+
+# transpose ONLY if taxa are rows
+if(taxa_are_rows(ps_china)){
+  otu <- t(otu)
+}
+
+otu <- as.data.frame(otu)
+
+# ---------------------------------
+# 2. Extract metadata
+# ---------------------------------
+
+meta <- sample_data(ps_china) |>
+  data.frame()
+
+# make sure rows align
+otu$Disease <- meta[rownames(otu),
+                    "Disease.MESH.ID"]
+
+# remove samples with NA disease
+otu <- otu |> filter(!is.na(Disease))
+
+# ---------------------------------
+# 3. Run Wilcoxon test for each taxon
+# ---------------------------------
+
+results <- data.frame()
+
+taxa <- setdiff(colnames(otu), "Disease")
+
+for(tax in taxa){
+
+  vals <- otu[[tax]]
+
+  # skip taxa with no variation
+  if(length(unique(vals)) < 2){
+    next
+  }
+
+  # skip taxa with all zeros
+  if(sum(vals) == 0){
+    next
+  }
+
+  # run test safely
+  test <- tryCatch(
+    wilcox.test(vals ~ otu$Disease),
+    error = function(e) NULL
+  )
+
+  # save results
+  if(!is.null(test)){
+
+    median_group1 <- median(
+      vals[otu$Disease ==
+             unique(otu$Disease)[1]],
+      na.rm = TRUE
+    )
+
+    median_group2 <- median(
+      vals[otu$Disease ==
+             unique(otu$Disease)[2]],
+      na.rm = TRUE
+    )
+
+    log2FC <- log2(
+      (median_group2 + 1e-6) /
+      (median_group1 + 1e-6)
+    )
+
+    results <- rbind(
+      results,
+      data.frame(
+        Taxon = tax,
+        pvalue = test$p.value,
+        log2FC = log2FC
+      )
+    )
+  }
+}
+
+# ---------------------------------
+# 4. Multiple testing correction
+# ---------------------------------
+
+results$padj <- p.adjust(results$pvalue,
+                         method = "BH")
+
+results <- results |>
+  arrange(padj)
+
+# view top taxa
+head(results)
+
+# ---------------------------------
+# 5. Volcano plot
+# ---------------------------------
+
+results$logp <- -log10(results$padj)
+
+ggplot(results,
+       aes(x = log2FC,
+           y = logp)) +
+  geom_point(alpha = 0.7) +
+  geom_hline(yintercept = -log10(0.05),
+             linetype = "dashed") +
+  theme_bw() +
+  labs(
+    title = "Differential abundance",
+    x = "log2 fold change",
+    y = "-log10 adjusted p-value"
+  )
+
+# ---------------------------------
+# 6. Heatmap of top taxa
+# ---------------------------------
+
+top_taxa <- results |>
+  filter(padj < 0.05) |>
+  slice_head(n = 20) |>
+  pull(Taxon)
+
+# fallback if fewer than 20 significant
+if(length(top_taxa) < 20){
+
+  top_taxa <- results |>
+    slice_head(n = 20) |>
+    pull(Taxon)
+}
+
+# subset matrix
+mat <- otu[, top_taxa]
+
+# scale taxa
+mat_scaled <- scale(mat)
+
+# annotation
+annotation <- data.frame(
+  Disease = otu$Disease
+)
+
+rownames(annotation) <- rownames(otu)
+
+# heatmap
+pheatmap(
+  t(mat_scaled),
+  annotation_col = annotation,
+  show_colnames = FALSE,
+  fontsize_row = 8
+)
+```
 
 
 
