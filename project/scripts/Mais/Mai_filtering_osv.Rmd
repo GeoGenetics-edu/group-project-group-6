@@ -21,7 +21,7 @@ rank_names(ps) #Viser hvilke taxonomiske niveauer der findes.
 sample_variables(ps) #Viser navnene på metadata-kolonnerne.
 ```
 
-Filtrere så vi kun beholder project ID
+Filtrere så vi kun beholder project ID med kina
 ```{r}
 ps_filtered <- subset_samples(
   ps,

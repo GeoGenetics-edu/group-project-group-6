@@ -1,0 +1,350 @@
+---
+title: "Mai_species_china"
+output: html_document
+---
+
+```{r}
+library(phyloseq)
+library(ggplot2)
+library(tidyverse)
+library(vegan)
+```
+
+
+Loader species phyloseq object
+```{r}
+load("C:/Users/mai/OneDrive/Documents/Uni/Metagenomic Analyses of Microbiomes/Projekt/diabetes_t2_D003924/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
+
+pylsq #Viser et overblik over phyloseq-objektet.
+
+sample_data(pylsq) #viser meta data for alle samples
+rank_names(pylsq) #Viser hvilke taxonomiske niveauer der findes.
+sample_variables(pylsq) #Viser navnene på metadata-kolonnerne.
+```
+
+
+
+```{r}
+ps_filtered <- subset_samples(
+  pylsq,
+  Project.ID == "PRJNA422434"
+)
+```
+
+
+Pca der finder variance
+og RDA med metadata
+
+```{r}
+ps_rel <- transform_sample_counts(pylsq, function(x) x / sum(x))
+otu_rel <- as(otu_table(ps_rel), "matrix") %>% t() %>% as.data.frame()
+meta_rel <- as(sample_data(ps_rel), "matrix") %>% as.data.frame()
+tax_rel <- as(tax_table(ps_rel), "matrix") %>% as.data.frame()
+
+```
+
+
+```{r}
+dat_rel <- otu_rel %>%
+  rownames_to_column("sample_id") %>%
+  pivot_longer(-sample_id, names_to = "taxon", values_to = "rel_abund") %>%
+  left_join(meta_rel %>% as("data.frame") %>% rownames_to_column("sample_id"), by = "sample_id") %>%
+  left_join(tax_rel %>% rownames_to_column("taxon"), by = "taxon")
+```
+
+
+Wilcoxon rank sum
+```{r}
+wilcox_results <- dat_rel %>%
+  group_by(taxon, Genus, Species) %>%
+  summarise(
+    p_value = wilcox.test(
+      rel_abund ~ Disease.MESH.ID,
+      exact = FALSE
+    )$p.value,
+
+    mean_D003924 = mean(
+      rel_abund[Disease.MESH.ID == "D003924"]
+    ),
+
+    mean_D006262 = mean(
+      rel_abund[Disease.MESH.ID == "D006262"]
+    ),
+
+    log2_fc = log2(
+      (mean_D003924 + 1e-6) /
+      (mean_D006262 + 1e-6)
+    ),
+
+    .groups = "drop"
+  ) %>%
+  mutate(
+    q_value = p.adjust(p_value, method = "BH")
+  )
+```
+
+
+
+```{r}
+wilcox_D006262_enriched <- wilcox_results %>%
+  select(
+    taxon,
+    Genus,
+    Species,
+    mean_D003924,
+    mean_D006262,
+    log2_fc,
+    p_value,
+    q_value
+  ) %>%
+  arrange(log2_fc) %>%
+  head(10)
+```
+
+
+
+
+
+
+```{r}
+wilcox_results %>%
+  mutate(
+    neg_log10_q = -log10(q_value),
+    direction = case_when(
+      q_value < 0.05 & log2_fc > 0 ~ "D003924-enriched",
+      q_value < 0.05 & log2_fc < 0 ~ "D006262-enriched",
+      TRUE ~ "Not significant"
+    )
+  ) %>%
+  ggplot(aes(x = log2_fc,
+             y = neg_log10_q,
+             color = direction)) +
+  geom_point(alpha = 0.6, size = 2) +
+  scale_color_manual(
+    values = c(
+      "D003924-enriched" = "#E74C3C",
+      "D006262-enriched" = "#3498DB",
+      "Not significant" = "grey60"
+    )
+  ) +
+  geom_hline(
+    yintercept = -log10(0.05),
+    linetype = "dashed",
+    color = "grey40"
+  ) +
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed",
+    color = "grey40"
+  ) +
+  labs(
+    x = "Log2 fold change (D003924 vs D006262)",
+    y = "-log10(q-value)",
+    color = NULL,
+    title = "Differential abundance between Disease.MESH.ID groups"
+  ) +
+  theme_bw()
+```
+
+
+
+```{r}
+bind_rows(
+  wilcox_results %>%
+    filter(q_value < 0.05) %>%
+    arrange(log2_fc) %>%
+    head(10),
+
+  wilcox_results %>%
+    filter(q_value < 0.05) %>%
+    arrange(-log2_fc) %>%
+    head(10)
+) %>%
+  distinct() %>%
+  mutate(
+    label = Species,
+    direction = ifelse(
+      log2_fc > 0,
+      "D003924-enriched",
+      "D006262-enriched"
+    )
+  ) %>%
+  ggplot(
+    aes(
+      x = reorder(label, -q_value),
+      y = log2_fc,
+      fill = direction
+    )
+  ) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_manual(
+    values = c(
+      "D003924-enriched" = "#E74C3C",
+      "D006262-enriched" = "#3498DB"
+    )
+  ) +
+  labs(
+    x = NULL,
+    y = "Log2 fold change (D003924 vs D006262)",
+    fill = NULL,
+    title = "Top differentially abundant species"
+  ) +
+  theme_bw()
+```
+
+
+
+```{r}
+glm_disease_results <- dat_rel %>%
+  group_by(taxon, Genus, Species) %>%
+  group_modify(~ {
+    fit <- glm(
+      log10(rel_abund + 1e-6) ~ Disease.MESH.ID,
+      data = .x,
+      family = gaussian()
+    )
+
+    broom::tidy(fit)
+  }) %>%
+  ungroup() %>%
+  filter(grepl("Disease.MESH.ID", term)) %>%
+  mutate(
+    q_value = p.adjust(p.value, method = "BH"),
+    fold_change = 10^estimate
+  )
+```
+
+
+
+
+```{r}
+glm_D006262_enriched <- glm_disease_results %>%
+  select(
+    taxon,
+    Genus,
+    Species,
+    estimate,
+    fold_change,
+    std.error,
+    statistic,
+    p.value,
+    q_value
+  ) %>%
+  arrange(fold_change) %>%
+  head(10)
+
+glm_D006262_enriched
+```
+
+
+
+```{r}
+glm_D003924_enriched <- glm_disease_results %>%
+  select(
+    taxon,
+    Genus,
+    Species,
+    estimate,
+    fold_change,
+    std.error,
+    statistic,
+    p.value,
+    q_value
+  ) %>%
+  arrange(desc(fold_change)) %>%
+  head(10)
+
+glm_D003924_enriched
+```
+
+
+
+```{r}
+glm_disease_results %>%
+  mutate(
+    neg_log10_q = -log10(q_value),
+    direction = case_when(
+      q_value < 0.05 & estimate > 0 ~ "D006262-enriched",
+      q_value < 0.05 & estimate < 0 ~ "D003924-enriched",
+      TRUE ~ "Not significant"
+    )
+  ) %>%
+  ggplot(aes(x = estimate,
+             y = neg_log10_q,
+             color = direction)) +
+  geom_point(alpha = 0.6, size = 2) +
+  scale_color_manual(
+    values = c(
+      "D003924-enriched" = "#3498DB",
+      "D006262-enriched" = "#E74C3C",
+      "Not significant" = "grey60"
+    )
+  ) +
+  geom_hline(
+    yintercept = -log10(0.05),
+    linetype = "dashed",
+    color = "grey40"
+  ) +
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed",
+    color = "grey40"
+  ) +
+  labs(
+    x = "GLM estimate (log10 relative abundance)",
+    y = "-log10(q-value)",
+    color = NULL,
+    title = "GLM: Disease.MESH.ID effect"
+  ) +
+  theme_bw()
+```
+
+
+
+
+```{r}
+bind_rows(
+  glm_disease_results %>%
+    filter(q_value < 0.05) %>%
+    arrange(estimate) %>%
+    head(10),
+
+  glm_disease_results %>%
+    filter(q_value < 0.05) %>%
+    arrange(desc(estimate)) %>%
+    head(10)
+) %>%
+  distinct() %>%
+  mutate(
+    label = Species,
+    direction = ifelse(
+      estimate > 0,
+      "D006262-enriched",
+      "D003924-enriched"
+    )
+  ) %>%
+  ggplot(
+    aes(
+      x = reorder(label, -q_value),
+      y = estimate,
+      fill = direction
+    )
+  ) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_manual(
+    values = c(
+      "D003924-enriched" = "#3498DB",
+      "D006262-enriched" = "#E74C3C"
+    )
+  ) +
+  labs(
+    x = NULL,
+    y = "GLM estimate (log10 relative abundance)",
+    fill = NULL,
+    title = "Top differentially abundant species (GLM)"
+  ) +
+  theme_bw()
+```
+
