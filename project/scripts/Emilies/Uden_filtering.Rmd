@@ -161,7 +161,7 @@ dispersion_bray <- betadisper(
 
 anova(dispersion_bray)
 plot(dispersion_bray)
-boxplot(disp_project)
+
 ```
 If dispersion differs strongly between groups, then a significant PERMANOVA result should be interpreted with caution.
 
@@ -201,6 +201,7 @@ alpha_diversity <- inner_join(
 ) 
 
 head(alpha_diversity)
+
 ```
 
 # Selve test
