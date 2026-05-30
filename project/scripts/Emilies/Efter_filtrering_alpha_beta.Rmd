@@ -68,7 +68,7 @@ plot_richness(
   ps_china,
   measures = c("Shannon"),
   x = "Disease.MESH.ID"
-) +
+) + 
   geom_boxplot(alpha = 0.6) +
   theme_bw()
 ```

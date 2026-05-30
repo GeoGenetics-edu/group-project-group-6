@@ -1094,7 +1094,7 @@ høj konsensus = mere robuste fund
 
 ### Significance × direction heatmap
 
-```{r heatmap, fig.width=8, fig.height=8}
+```{r heatmap, fig.width=6, fig.height=6}
 heatmap_data <- comparison_results %>%
   filter(wilcox_q < 0.05 | glm_q < 0.05 | glm_adj_q < 0.05 | clr_q < 0.05) %>%
   mutate(label = Species) %>%
