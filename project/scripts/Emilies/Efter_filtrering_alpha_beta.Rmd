@@ -20,8 +20,8 @@ library(tibble)
 
 # Load phyloseq  - rå data 
 ```{r}
-load("project/data/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
-ps_genus <- pylsq
+load("project/data/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
+ps_species <- pylsq
 rm(pylsq) # fjerne pylsq, så man kan have mere end et. 
 
 # Undersøger de to phylseq
@@ -30,7 +30,7 @@ ps_genus
 
 # Kun kina 
 ```{r}
-ps_china <- subset_samples(ps_genus,
+ps_china <- subset_samples(ps_species,
                            Project.ID == "PRJNA422434")
 ```
 
@@ -70,6 +70,24 @@ plot_richness(
   x = "Disease.MESH.ID"
 ) + 
   geom_boxplot(alpha = 0.6) +
+  theme_bw()
+
+plot_richness(
+  ps_china,
+  measures = c("Shannon", "Simpson"),
+  x = "Disease.MESH.ID"
+) +
+  geom_boxplot(aes(fill = Disease.MESH.ID), alpha = 0.6) +
+  scale_x_discrete(
+    limits = c("D006262", "D003924"),
+    labels = c("D006262" = "Control", "D003924" = "T2D")
+  ) +
+  scale_fill_manual(
+    values = c("D006262" = "blue", "D003924" = "red"),
+    labels = c("D006262" = "Control", "D003924" = "T2D"),
+    name   = "Group"
+  ) +
+  labs(x = "Group") +
   theme_bw()
 ```
 # Statestik af alpha 
