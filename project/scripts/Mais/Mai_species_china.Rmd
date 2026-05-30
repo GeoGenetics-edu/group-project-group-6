@@ -5,9 +5,17 @@ output: html_document
 
 ```{r}
 library(phyloseq)
-library(ggplot2)
-library(tidyverse)
 library(vegan)
+library(dplyr)
+library(tibble)
+library(purrr)
+library(stringr)
+library(ggplot2)
+library(ggh4x)
+library(lme4)
+library(lmerTest)
+library(broom.mixed)
+library(microbiome)
 ```
 
 
@@ -15,7 +23,7 @@ Loader species phyloseq object
 ```{r}
 load("C:/Users/mai/OneDrive/Documents/Uni/Metagenomic Analyses of Microbiomes/Projekt/diabetes_t2_D003924/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
 
-pylsq #Viser et overblik over phyloseq-objektet.
+#pylsq #Viser et overblik over phyloseq-objektet.
 
 sample_data(pylsq) #viser meta data for alle samples
 rank_names(pylsq) #Viser hvilke taxonomiske niveauer der findes.
@@ -23,7 +31,7 @@ sample_variables(pylsq) #Viser navnene på metadata-kolonnerne.
 ```
 
 
-
+Sortere så vi kun har kina
 ```{r}
 ps_filtered <- subset_samples(
   pylsq,
@@ -32,28 +40,47 @@ ps_filtered <- subset_samples(
 ```
 
 
-Pca der finder variance
-og RDA med metadata
 
+Forbereder data
 ```{r}
-ps_rel <- transform_sample_counts(pylsq, function(x) x / sum(x))
+#For hvert sample er x vektoren med tællinger for alle taxa i prøven, dette dividere vi med summen så vi får relative abundanser
+ps_rel <- transform_sample_counts(ps_filtered, function(x) x / sum(x))
+
+#Henter OTU tabellen og konvertere til matrix, transponere og laver til dataframe:
 otu_rel <- as(otu_table(ps_rel), "matrix") %>% t() %>% as.data.frame()
+
+#udtrækker metadata for prøverne som dataframe
 meta_rel <- as(sample_data(ps_rel), "matrix") %>% as.data.frame()
+
+#udtrækker taksanomi tabellen som dataframe
 tax_rel <- as(tax_table(ps_rel), "matrix") %>% as.data.frame()
 
 ```
 
-
+Forbereder data
 ```{r}
+#Tager OTU table og laver om til long format dataset
 dat_rel <- otu_rel %>%
   rownames_to_column("sample_id") %>%
   pivot_longer(-sample_id, names_to = "taxon", values_to = "rel_abund") %>%
+  
+#tilføjer metadata
   left_join(meta_rel %>% as("data.frame") %>% rownames_to_column("sample_id"), by = "sample_id") %>%
+  
+#tilføjer taxonomi
   left_join(tax_rel %>% rownames_to_column("taxon"), by = "taxon")
+
+#dat_rel er en samlet tabel med samples, taxon, dens relative abundans, metadata og taxonomiske niveauer. 
 ```
 
 
-Wilcoxon rank sum
+
+
+
+## Wilcoxon rank-sum test
+This chunk runs one Wilcoxon test per taxon, compares T2D with healthy and adds a BH-adjusted `q_value`.
+Altså den tager hvert taxa og ser om der er en signifikant forskel mellem grupperne.
+
 ```{r}
 wilcox_results <- dat_rel %>%
   group_by(taxon, Genus, Species) %>%
@@ -81,32 +108,63 @@ wilcox_results <- dat_rel %>%
   mutate(
     q_value = p.adjust(p_value, method = "BH")
   )
+head(wilcox_results, 10)
+
+
+
 ```
+Vi ser NaN fordi der nok er nogle taxa som er 0 i alle samples. Dvs. der er taxa tilstede i tabellen som ingen af samples har. Det kan fx være at disse taxa var tilstede i nogle af de andre projekter men nu er blevet filtreret fra. 
 
+Positiv log2 fold change betyder at taxonet er enriched hos T2D
+Negativ log2 fold change betyder at taxonet er enriched hos kontrol
+log2 fold change beregnes: log2(mean T2D/ mean kontrol)
 
-
+# Tager nu min wilcoxon tests og finder de 10 mest enriched taxa hos raske
 ```{r}
+# Finder de 10 taxa, der er mest berigede hos raske (D006262)
+# sammenlignet med T2D (D003924), baseret på log2 fold change.
 wilcox_D006262_enriched <- wilcox_results %>%
-  select(
-    taxon,
-    Genus,
-    Species,
-    mean_D003924,
-    mean_D006262,
-    log2_fc,
-    p_value,
-    q_value
-  ) %>%
+  select(taxon, Genus, Species, mean_D003924, mean_D006262, log2_fc, p_value, q_value) %>%
   arrange(log2_fc) %>%
   head(10)
+
+wilcox_D006262_enriched
+
+# Finder de 10 taxa, der er mest berigede hos raske (D006262)
+# og samtidig er signifikante efter BH-korrektion (q < 0.05).
+wilcox_D006262_enriched_significant <- wilcox_results %>%
+  filter(q_value < 0.05) %>%
+  arrange(log2_fc) %>%
+  head(10)
+
+wilcox_D006262_enriched_significant
+```
+
+#Finder nu de 10 mest enriched taxa hos T2D
+```{r}
+wilcox_D003924_enriched <- wilcox_results %>%
+  select(taxon, Genus, Species, mean_D003924, mean_D006262, log2_fc, p_value, q_value) %>%
+  arrange(desc(log2_fc)) %>%
+  head(10)
+
+wilcox_D003924_enriched
+
+# Finder de 10 taxa, der er mest berigede hos syge (D003924)
+# og samtidig er signifikante efter BH-korrektion (q < 0.05).
+wilcox_D003924_enriched_significant <- wilcox_results %>%
+  filter(q_value < 0.05) %>%
+  arrange(desc(log2_fc)) %>%
+  head(10)
+
+wilcox_D003924_enriched_significant
 ```
 
 
 
 
 
-
 ```{r}
+# Volcano plot: Wilcoxon rank test
 wilcox_results %>%
   mutate(
     neg_log10_q = -log10(q_value),
@@ -145,10 +203,16 @@ wilcox_results %>%
   ) +
   theme_bw()
 ```
+Hver prik er et taxa. 
+Omdanner q-værdier til -log10, dvs. jo lavere q-værdi, jo højere ligger taxaet. 
+Til venstre ser vi mere enriched hos raske, til højre er de mere enriched hos syge. 
+Use the volcano plot to identify taxa that are both large-effect and statistically supported.
 
 
 
+The next plot shows Wilcoxon effect size on the x-axis and orders taxa by q-value.
 ```{r}
+# Bar chart of top significant taxa ordered by q-value (Wilcoxon)
 bind_rows(
   wilcox_results %>%
     filter(q_value < 0.05) %>%
@@ -194,13 +258,18 @@ bind_rows(
 ```
 
 
+## Sickness status difference using log-transformed linear models
+
+Denne kode laver en lineær model (GLM med gaussian-fordeling) for hver taxon for at undersøge, om abundansen er associeret med sygdomsstatus.
+
+I modsætning til din Wilcoxon-analyse er dette en parametrisk model, som arbejder på log-transformerede abundanser.
 
 ```{r}
 glm_disease_results <- dat_rel %>%
   group_by(taxon, Genus, Species) %>%
   group_modify(~ {
-    fit <- glm(
-      log10(rel_abund + 1e-6) ~ Disease.MESH.ID,
+    fit <- glm( #fitter en model for hvert taxa
+      log10(rel_abund + 1e-6) ~ Disease.MESH.ID, #tilføjer 10^-6 som pseudocount
       data = .x,
       family = gaussian()
     )
@@ -220,47 +289,50 @@ glm_disease_results <- dat_rel %>%
 
 ```{r}
 glm_D006262_enriched <- glm_disease_results %>%
-  select(
-    taxon,
-    Genus,
-    Species,
-    estimate,
-    fold_change,
-    std.error,
-    statistic,
-    p.value,
-    q_value
+  select(taxon, Genus, Species, estimate, fold_change, std.error, statistic, p.value, q_value
   ) %>%
   arrange(fold_change) %>%
   head(10)
 
 glm_D006262_enriched
+
+
+# Finder de 10 taxa, der er mest berigede hos raske (D006262)
+# blandt de taxa, der er signifikante efter BH-korrektion.
+glm_D006262_enriched_significant <- glm_disease_results %>%
+  filter(q_value < 0.05) %>%
+  arrange(fold_change) %>%
+  head(10)
+
+glm_D006262_enriched_significant
 ```
 
 
 
 ```{r}
 glm_D003924_enriched <- glm_disease_results %>%
-  select(
-    taxon,
-    Genus,
-    Species,
-    estimate,
-    fold_change,
-    std.error,
-    statistic,
-    p.value,
-    q_value
+  select(taxon, Genus, Species, estimate, fold_change, std.error, statistic, p.value, q_value
   ) %>%
   arrange(desc(fold_change)) %>%
   head(10)
 
 glm_D003924_enriched
+
+# Finder de 10 taxa, der er mest berigede hos syge (D003924)
+# blandt de taxa, der er signifikante efter BH-korrektion.
+glm_D003924_enriched_significant <- glm_disease_results %>%
+  filter(q_value < 0.05) %>%
+  arrange(desc(fold_change)) %>%
+  head(10)
+
+glm_D003924_enriched_significant
+
 ```
 
-
+The GLM volcano plot uses the model estimate as the effect-size axis.
 
 ```{r}
+# Volcano plot: GLM (unadjusted)
 glm_disease_results %>%
   mutate(
     neg_log10_q = -log10(q_value),
@@ -300,10 +372,14 @@ glm_disease_results %>%
   theme_bw()
 ```
 
+Compare the overall pattern with the Wilcoxon volcano plot, remembering the effect-size scales differ.
 
 
+
+The next plot shows GLM effect size on the x-axis and orders taxa by q-value.
 
 ```{r}
+# Bar chart of top significant taxa ordered by q-value (GLM)
 bind_rows(
   glm_disease_results %>%
     filter(q_value < 0.05) %>%
@@ -335,8 +411,8 @@ bind_rows(
   coord_flip() +
   scale_fill_manual(
     values = c(
-      "D003924-enriched" = "#3498DB",
-      "D006262-enriched" = "#E74C3C"
+      "D003924-enriched" = "#E74C3C",
+      "D006262-enriched" = "#3498DB"
     )
   ) +
   labs(
@@ -347,4 +423,8 @@ bind_rows(
   ) +
   theme_bw()
 ```
+Dette passer meget godt med hvad vi så for wilcoxon. 
 
+
+Pca der finder variance
+og RDA med metadata
