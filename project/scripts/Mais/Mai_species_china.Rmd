@@ -428,3 +428,183 @@ Dette passer meget godt med hvad vi så for wilcoxon.
 
 Pca der finder variance
 og RDA med metadata
+
+
+# Adjusting the linear model for age
+Hvilke taxa er associeret med T2D efter justering for alder?
+Når vi sammenligner health status kan vi ikke vide om det skyldes 
+```{r}
+glm_disease_age_adjusted <- dat_rel %>%
+  group_by(taxon, Genus, Species) %>%
+  group_modify(~ {
+    fit <- glm(
+      log10(rel_abund + 1e-6) ~ Disease.MESH.ID + Host.age,
+      data = .x,
+      family = gaussian()
+    )
+
+    broom::tidy(fit)
+  }) %>%
+  ungroup() %>%
+  filter(grepl("Disease.MESH.ID", term)) %>%
+  mutate(
+    q_value = p.adjust(p.value, method = "BH"),
+    fold_change = 10^estimate
+  )
+```
+
+
+```{r}
+# De 10 taxa mest berigede hos raske efter justering for alder
+glm_adj_D006262_enriched <- glm_disease_age_adjusted %>%
+  select(
+    taxon, Genus, Species,
+    estimate, fold_change,
+    std.error, statistic,
+    p.value, q_value
+  ) %>%
+  arrange(fold_change) %>%
+  head(10)
+
+glm_adj_D006262_enriched
+```
+
+
+```{r}
+# De 10 taxa mest berigede hos T2D efter justering for alder
+glm_adj_D003924_enriched <- glm_disease_age_adjusted %>%
+  select(
+    taxon, Genus, Species,
+    estimate, fold_change,
+    std.error, statistic,
+    p.value, q_value
+  ) %>%
+  arrange(desc(fold_change)) %>%
+  head(10)
+
+glm_adj_D003924_enriched
+
+```
+Estimate større end 0 er enriched hos de raske. Estimate under 0 er enriched hos de syge. 
+
+```{r}
+# Volcano plot: GLM adjusted for age
+glm_disease_age_adjusted %>%
+  mutate(
+    neg_log10_q = -log10(q_value),
+    direction = case_when(
+      q_value < 0.05 & estimate > 0 ~ "D006262-enriched",
+      q_value < 0.05 & estimate < 0 ~ "D003924-enriched",
+      TRUE ~ "Not significant"
+    )
+  ) %>%
+  ggplot(
+    aes(
+      x = estimate,
+      y = neg_log10_q,
+      color = direction
+    )
+  ) +
+  geom_point(alpha = 0.6, size = 2) +
+  scale_color_manual(
+    values = c(
+      "D003924-enriched" = "#E74C3C",
+      "D006262-enriched" = "#3498DB",
+      "Not significant" = "grey60"
+    )
+  ) +
+  geom_hline(
+    yintercept = -log10(0.05),
+    linetype = "dashed",
+    color = "grey40"
+  ) +
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed",
+    color = "grey40"
+  ) +
+  labs(
+    x = "GLM estimate (log10 relative abundance, adjusted for age)",
+    y = "-log10(q-value)",
+    color = NULL,
+    title = "Disease effect adjusted for age"
+  ) +
+  theme_bw()
+```
+
+
+# beregner gennemsnitsalderen i de to grupper rask/T2D
+```{r}
+meta_rel %>%
+  mutate(Host.age = as.numeric(Host.age)) %>%
+  group_by(Disease.MESH.ID) %>%
+  summarise(
+    mean_age = mean(Host.age),
+    median_age = median(Host.age),
+    sd_age = sd(Host.age),
+    .groups = "drop"
+  )
+
+#tester om de to grupper har samme alder:
+wilcox.test(
+  as.numeric(Host.age) ~ Disease.MESH.ID,
+  data = meta_rel
+)
+```
+Compare this to the unadjusted GLM volcano to see which taxa move after adjustment.
+
+
+The next plot shows adjusted GLM effect size on the x-axis and orders taxa by q-value.
+```{r}
+# Bar chart of top significant taxa ordered by q-value
+# (Disease effect adjusted for age)
+
+bind_rows(
+  glm_disease_age_adjusted %>%
+    filter(q_value < 0.05) %>%
+    arrange(estimate) %>%
+    head(10),
+
+  glm_disease_age_adjusted %>%
+    filter(q_value < 0.05) %>%
+    arrange(desc(estimate)) %>%
+    head(10)
+) %>%
+  distinct() %>%
+  mutate(
+    label = Species,
+    direction = ifelse(
+      estimate > 0,
+      "D006262-enriched",
+      "D003924-enriched"
+    )
+  ) %>%
+  ggplot(
+    aes(
+      x = reorder(label, -q_value),
+      y = estimate,
+      fill = direction
+    )
+  ) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_manual(
+    values = c(
+      "D003924-enriched" = "#E74C3C",
+      "D006262-enriched" = "#3498DB"
+    )
+  ) +
+  labs(
+    x = NULL,
+    y = "GLM estimate adjusted for age (log10 relative abundance)",
+    fill = NULL,
+    title = "Top differentially abundant taxa (disease effect adjusted for age)"
+  ) +
+  theme_bw()
+```
+
+
+
+## Compositional analysis with CLR transformation
+
+
