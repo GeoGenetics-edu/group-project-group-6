@@ -156,14 +156,22 @@ Permanova followed by Betadispersion tests...
 adonis2(bray_dist ~ Disease.MESH.ID, data = sample_df, permutations = 999)
 adonis2(bray_dist ~ Project.ID,      data = sample_df, permutations = 999)
 ```
-Permanova 
+Permanova "on" (don't know if that is the wording) Disease.MESH.ID shows that Disease.MESH.ID explains roughly 3% of the total variance. The significant p-value tells us that there is a significant difference between the Disease.MESH.IDs. Also high f-statistic of 13.134. 
+
+Permanova "on" (don't know if that is the wording) Project.ID shows that Project.ID explains roughly 13% of the total variance. -> much more than Disease.MESH.ID. The significant p-value tells us that there is a significant difference between the ProjectIDs. Also very high f-statistic of 31.732. 
+
+To test if the difference is due to unequal dispersion we run a betadisper:
 ```{r betadisper}
 disp_disease <- betadisper(bray_dist, sample_df$Disease.MESH.ID)
 anova(disp_disease)
 disp_project <- betadisper(bray_dist, sample_df$Project.ID)
 anova(disp_project)
 ```
+The p-value for dispersion in regards to Disease.MESH.ID is very low. This shift is mostly just due to unequal dispersion between Disease.MESH.IDs. (also clearly visible in the plot below.)
 
+The p-value for dispersion in regards to Project.ID is still significant but not as highly significant as for Disease.MESH.ID. This suggests that differences between projects are less influenced (though influenced) by unequal dispersion and more likely reflect true difference between Project.IDs. This is again supported by the permanova result: Project.ID (R² = 0.129) compared to Disease.MESH.ID (R² = 0.030). Also, the Project.IDs are different cohorts. Very likely to have not only biological variance due to genetic/geographic/cultural differences, but also technical variance due to the samples being gathered and processed by entirely different labs. Mic drop.
+
+Very pretty plots supporting the above.
 ```{r betadisper-plots, fig.width=7, fig.height=5}
 plot(disp_disease, main = "disp_disease")
 plot(disp_project, main = "disp_project")
@@ -171,6 +179,7 @@ plot(disp_project, main = "disp_project")
 
 # 6. Alpha diversity by project
 
+Now we check alpha diversity (shannon) by different ProjectIDs.
 ```{r alpha-by-project, fig.width=8, fig.height=5}
 plot_richness(
   ps_genus,
@@ -183,7 +192,12 @@ plot_richness(
                                 "PRJNA299502" = "forestgreen",
                                 "PRJNA422434" = "purple"))
 ```
+This also might explain why T2D seems to have significantly higher alpha diversity! 
+Only healthy people from china and samples from china (PRJNA422434) has lower alpha diversity than samples from the other ProjectIDs.
 
+Testing this difference
+*Why kruskals?*
 ```{r kruskal-project}
 kruskal.test(Shannon ~ Project.ID, data = alpha_div)
 ```
+Significant difference.
