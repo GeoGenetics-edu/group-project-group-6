@@ -157,11 +157,17 @@ plot_richness(
   color = "Disease.MESH.ID"
 ) +
 geom_boxplot(alpha = 0.3) +
-scale_color_manual(
-  values = c("D003924" = "red", "D006262" = "darkgreen"),
-  labels = c("Type 2 Diabetes", "Healthy")
-) +
-theme_classic()
+  scale_color_manual(
+  values = c(
+    "D003924" = "red",
+    "D006262" = "#0000ff"
+  ),
+  labels = c(
+    "D003924" = "T2D",
+    "D006262" = "Control"
+  )
+)
++ theme_classic()
 ```
 
 ```{r}
@@ -801,6 +807,170 @@ ggplot(glm_species_results,
     color = NULL
   ) +
   theme_bw()
+```
+```{r}
+# Significance heatmap with directionality:
+# signed -log10(q) across all methods for species significant in at least one method
+colnames(comparison_results)
+
+heatmap_data <- comparison_results %>%
+  filter(
+    wilcox_q < 0.05 |
+    glm_q < 0.05 |
+    glm_adj_q < 0.05 |
+    clr_q < 0.05
+  ) %>%
+  mutate(label = Species)
+  select(
+    label,
+    wilcox_q, glm_q, glm_adj_q, clr_q,
+    wilcox_log2fc, glm_estimate, glm_adj_estimate, clr_estimate
+  ) %>%
+  pivot_longer(
+    cols = c(wilcox_q, glm_q, glm_adj_q, clr_q),
+    names_to = "method",
+    values_to = "q_value"
+  ) %>%
+  mutate(
+    direction = case_when(
+      method == "wilcox_q"  ~ wilcox_log2fc,
+      method == "glm_q"     ~ glm_estimate,
+      method == "glm_adj_q" ~ glm_adj_estimate,
+      method == "clr_q"     ~ clr_estimate
+    ),
+    signed_neg_log10_q = sign(direction) * pmin(-log10(q_value), 10),
+    method = factor(
+      method,
+      levels = c("wilcox_q", "glm_q", "glm_adj_q", "clr_q"),
+      labels = c("Wilcoxon", "GLM", "GLM adjusted", "CLR")
+    )
+  )
+
+taxon_order <- heatmap_data %>%
+  group_by(label) %>%
+  summarise(
+    mean_signed = mean(signed_neg_log10_q, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(mean_signed) %>%
+  pull(label)
+
+heatmap_data %>%
+  mutate(label = factor(label, levels = taxon_order)) %>%
+  ggplot(aes(x = method, y = label, fill = signed_neg_log10_q)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(
+    aes(label = ifelse(q_value < 0.05, "*", "")),
+    color = "black",
+    size = 3
+  ) +
+  scale_fill_gradient2(
+    low = "#3498DB",
+    mid = "white",
+    high = "#C0392B",
+    midpoint = 0,
+    limits = c(-10, 10),
+    name = "Signed\n-log10(q)",
+    breaks = c(-10, -5, 0, 5, 10),
+    labels = c("-10\n(non-T2D)", "-5", "0", "5", "10\n(T2D)")
+  ) +
+  labs(
+    x = "Method",
+    y = "Species",
+    title = "Significance and directionality across methods at species level",
+    subtitle = "q < 0.05 marked with *; Blue = non-T2D enriched, Red = T2D enriched"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.y = element_text(size = 7),
+    axis.text.x = element_text(size = 10),
+    plot.title = element_text(face = "bold")
+  )
+```
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Heatmap: significance + directionality for T2D at species level
+
+heatmap_data <- comparison_results %>%
+  filter(
+    wilcox_q < 0.05 |
+    glm_q < 0.05 |
+    glm_adj_q < 0.05 |
+    clr_q < 0.05
+  ) %>%
+  mutate(
+    label = paste(Genus, Species)
+  ) %>%
+  select(
+    label,
+    wilcox_q, glm_q, glm_adj_q, clr_q,
+    wilcox_log2fc, glm_estimate, glm_adj_estimate, clr_estimate
+  ) %>%
+  pivot_longer(
+    cols = c(wilcox_q, glm_q, glm_adj_q, clr_q),
+    names_to = "method",
+    values_to = "q_value"
+  ) %>%
+  mutate(
+    direction = case_when(
+      method == "wilcox_q" ~ wilcox_log2fc,
+      method == "glm_q" ~ glm_estimate,
+      method == "glm_adj_q" ~ glm_adj_estimate,
+      method == "clr_q" ~ clr_estimate
+    ),
+    signed_neg_log10_q = sign(direction) * pmin(-log10(q_value), 10),
+    method = factor(
+      method,
+      levels = c("wilcox_q", "glm_q", "glm_adj_q", "clr_q"),
+      labels = c("Wilcoxon", "GLM", "GLM adjusted", "CLR")
+    )
+  )
+
+taxon_order <- heatmap_data %>%
+  group_by(label) %>%
+  summarise(
+    mean_signed = mean(signed_neg_log10_q, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(mean_signed) %>%
+  pull(label)
+
+heatmap_data %>%
+  mutate(label = factor(label, levels = taxon_order)) %>%
+  ggplot(aes(x = method, y = label, fill = signed_neg_log10_q)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(
+    aes(label = ifelse(q_value < 0.05, "*", "")),
+    color = "black",
+    size = 3
+  ) +
+  scale_fill_gradient2(
+    low = "#3498DB",
+    mid = "white",
+    high = "#C0392B",
+    midpoint = 0,
+    limits = c(-10, 10),
+    name = "Signed\n-log10(q)",
+    breaks = c(-10, -5, 0, 5, 10),
+    labels = c("-10\n(non-T2D)", "-5", "0", "5", "10\n(T2D)")
+  ) +
+  labs(
+    x = "Method",
+    y = "Species",
+    title = "Significance and directionality across methods at species level",
+    subtitle = "q < 0.05 marked with *; Blue = non-T2D enriched, Red = T2D enriched"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.y = element_text(size = 7),
+    axis.text.x = element_text(size = 10),
+    plot.title = element_text(face = "bold")
+  )
 ```
 
 
