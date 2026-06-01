@@ -14,12 +14,6 @@ knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 ```
 
-# Purpose
-
-File 1 showed that on the full data, disease status is confounded with cohort (two of three projects are case-only; all healthy controls are Chinese; project explains ~4× more community variation than disease). This file removes that confound by **restricting to the single case–control cohort** — `PRJNA422434` (China), with both T2D and healthy controls — and re-runs the genus-level diversity analyses there.
-
-Steps: filter → check sequencing depth is not a confounder → alpha diversity (Shannon, Simpson) by disease → beta diversity (Bray–Curtis) by disease with PERMANOVA and dispersion. Because cohort is now held constant, the disease comparisons here **are** interpretable as disease effects.
-
 # 1. Libraries
 
 ```{r libraries}
@@ -31,12 +25,10 @@ library(tibble)
 library(tidyr)
 ```
 
-> *Taught in: W20-01 (phyloseq + tidyverse), W20-03 (`vegan`).*
-
-# 2. Load and filter to the Chinese cohort
+# 2. Load and filter to China
 
 ```{r load-filter}
-load("project/data/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+load("project/data/D003924_Diabetes_Mellitus,_T/genus/D003924_phyloseq_updated_genus.RData")
 ps <- subset_samples(pylsq, Project.ID == "PRJNA422434")
 rm(pylsq)
 
@@ -44,12 +36,7 @@ ps
 table(sample_data(ps)$Disease.MESH.ID)
 ```
 
-> *Taught in: W20-01 (load), W20-03 (`subset_samples`). The cohort filter is project-chosen; full justification in file 1 and `cohort_rationale.Rmd`.*
-
-Expected: 359 samples — 187 T2D (`D003924`) + 172 Healthy (`D006262`). Within this cohort, disease and country/project no longer covary.
-
 ```{r alpha-prep}
-# Alpha-diversity table joined to metadata (used by §3 and §4)
 alpha <- estimate_richness(ps, measures = c("Shannon", "Simpson")) |>
   rownames_to_column("sample_id")
 
@@ -61,19 +48,13 @@ alpha_div <- inner_join(alpha, meta, by = "sample_id") |>
   mutate(Disease = ifelse(Disease.MESH.ID == "D003924", "T2D", "Healthy"))
 ```
 
-> *Taught in: W20-02 §2 — `estimate_richness()` (Shannon, Simpson) joined to `sample_data()`.*
-
-# 3. Sequencing depth — is it a confounder?
-
-A diversity difference between groups could be an artefact of unequal sequencing depth. We check two things: (i) does depth differ between disease groups, and (ii) does depth correlate with diversity? Depth is the per-sample read count (`Nr..reads.sequenced`).
+# 3. Sequencing depth
 
 ```{r depth-by-group}
-# (i) Does sequencing depth differ between T2D and Healthy?
 wilcox.test(Nr..reads.sequenced ~ Disease.MESH.ID, data = alpha_div)
 ```
 
 ```{r depth-vs-shannon, fig.width=7, fig.height=4}
-# (ii) Does depth correlate with Shannon diversity?
 cor.test(alpha_div$Nr..reads.sequenced, alpha_div$Shannon, method = "spearman")
 
 ggplot(alpha_div, aes(x = Nr..reads.sequenced, y = Shannon, color = Disease)) +
@@ -86,11 +67,7 @@ ggplot(alpha_div, aes(x = Nr..reads.sequenced, y = Shannon, color = Disease)) +
        title = "Sequencing depth vs Shannon diversity (Chinese cohort)")
 ```
 
-> *Taught in: W20-02 §"Effect of sequencing depth on alpha diversity" — Spearman `cor.test(..., method = "spearman")` of depth against a diversity metric, with a depth-vs-diversity scatter.*
-
-**Interpretation.** A variable can only confound the diversity comparison if it is associated with **both** the disease grouping **and** the diversity outcome. Here, sequencing depth *does* differ between disease groups (test (i) is significant) — but it shows **essentially no correlation with Shannon** (test (ii): |ρ| ≈ 0, non-significant, flat trend lines). Because depth does not track diversity, the depth difference between groups cannot bias the Shannon/Simpson comparison — the diversity difference in §4 is **not** a depth artefact. (This is also expected mechanistically: Shannon and Simpson are abundance-weighted, not raw richness counts, so they are far less depth-sensitive than `Observed` would be.) The depth difference between groups is itself worth noting as a batch/processing signal, and is a reason we adjust per-taxon models for biological covariates at the differential-abundance stage rather than reading raw abundances naïvely.
-
-# 4. Alpha diversity by disease (Chinese cohort)
+# 4. Alpha diversity by disease
 
 ```{r alpha-plot, fig.width=8, fig.height=4}
 alpha_div |>
@@ -110,7 +87,6 @@ alpha_div |>
 wilcox.test(Shannon ~ Disease.MESH.ID, data = alpha_div)
 wilcox.test(Simpson ~ Disease.MESH.ID, data = alpha_div)
 
-# Group medians (the non-parametric descriptive summary that pairs with Wilcoxon)
 alpha_div |>
   group_by(Disease) |>
   summarise(median_Shannon = median(Shannon),
@@ -118,15 +94,7 @@ alpha_div |>
             .groups = "drop")
 ```
 
-> *Taught in: W20-02 — `wilcox.test` for two-group alpha-diversity comparison; group medians as the descriptive summary. (Effect size via the `effectsize` package is not used: not part of the course material.)*
-
-**Interpretation — and the direction puzzle.** Within the clean cohort the disease difference is **smaller** than on the full data (the cohort inflation is gone) but, if it survives, it is a genuine within-population effect. Note the direction: T2D tends to show **slightly higher** diversity than Healthy — the opposite of the "dysbiosis lowers diversity" stereotype. This is defensible rather than anomalous:
-
-- the T2D alpha-diversity literature is genuinely mixed (unlike IBD);
-- the most likely driver is **metformin**, which alters the gut community and can raise apparent diversity (Forslund et al. 2015, *Nature*) — treatment status is not in this metadata, so we flag it as a limitation;
-- the effect is **small** (see medians and the modest beta R² in §5), so we report it as a small, robust, depth-independent difference, not a strong one.
-
-# 5. Beta diversity by disease (Bray–Curtis, Chinese cohort)
+# 5. Beta diversity by disease
 
 ```{r beta-dist}
 ps_rel    <- transform_sample_counts(ps, function(x) x / sum(x))
@@ -134,10 +102,6 @@ bray_dist <- distance(ps_rel, method = "bray")
 ord_bray  <- ordinate(ps_rel, method = "PCoA", distance = bray_dist)
 sample_df <- sample_data(ps_rel) |> data.frame()
 ```
-
-> *Taught in: W20-03 §2–§3 — relative-abundance transform, `distance(method = "bray")`, `ordinate(method = "PCoA")`.*
-
-## 5.1 PCoA coloured by disease
 
 ```{r pcoa-disease, fig.width=8, fig.height=5}
 plot_ordination(ps_rel, ord_bray, color = "Disease.MESH.ID") +
@@ -150,8 +114,6 @@ plot_ordination(ps_rel, ord_bray, color = "Disease.MESH.ID") +
   labs(title = "Bray–Curtis PCoA — disease (Chinese cohort)")
 ```
 
-## 5.2 PERMANOVA and dispersion
-
 ```{r permanova}
 adonis2(bray_dist ~ Disease.MESH.ID, data = sample_df, permutations = 999)
 ```
@@ -161,24 +123,6 @@ disp_disease <- betadisper(bray_dist, sample_df$Disease.MESH.ID)
 anova(disp_disease)
 ```
 
-The dispersion object can be plotted directly: each point is a sample in PCoA space, with a hull and centroid per disease group. The spread of each hull is that group's within-group dispersion — here the two hulls should overlap closely (similar spread), consistent with the non-significant betadisper.
-
 ```{r betadisper-plot, fig.width=7, fig.height=5}
 plot(disp_disease, main = "disp_disease")
 ```
-
-> *Taught in: W20-03 §4 — `adonis2()` PERMANOVA and `betadisper()` + `anova()`, with the dispersion plot. The two are reported together because PERMANOVA responds to centroid and/or dispersion differences.*
-
-**Interpretation.** Two things to read off:
-
-1. **PERMANOVA R² and p** — disease explains a small percentage of community variation (typically 1–5 % in human gut studies). A significant but small R² is the expected, honest result; we report the percentage so we do not over-claim from the p-value.
-2. **betadisper** — if dispersion is now **non-significant** (unlike the full data in file 1, where it was significant), the significant PERMANOVA can be read as a clean **centroid shift**: T2D and Healthy communities sit in genuinely different places, not merely differ in spread. The disappearance of the dispersion signal after filtering is itself evidence that the full-data dispersion difference was a cohort artefact.
-
-# 6. Conclusion of file 2
-
-- Restricting to the Chinese case–control cohort (n = 359) removes the cohort confound.
-- Sequencing depth is not a confounder (§3), so the diversity differences are real.
-- Alpha diversity differs slightly by disease (T2D marginally higher — small, depth-independent, plausibly metformin-linked) (§4).
-- Beta diversity shows a **small but significant, dispersion-clean centroid shift** by disease (§5) — a genuine compositional difference within one population.
-
-These are whole-community signals. **File 3** moves to the per-taxon question — *which* taxa (and which metabolic activities) drive the difference — at species resolution, using the differential-abundance methods from week 21.
