@@ -64,8 +64,10 @@ ps_g_disease <- merge_samples(ps_g_top, group = "Disease.MESH.ID") |>
   transform_sample_counts(function(x) x / sum(x))
 
 plot_bar(ps_g_disease, fill = "Genus") +
+  scale_x_discrete(labels = c("D006262" = "Healthy", "D003924" = "T2D")) +
   theme_bw() +
-  labs(title = "Top 10 genera by disease group")
+  labs(x = "Disease group", y = "Relative abundance",
+       title = "Top 10 genera by disease group")
 ```
 
 ```{r composition-species, fig.width=8, fig.height=5}
@@ -75,8 +77,10 @@ ps_s_disease <- merge_samples(ps_s_top, group = "Disease.MESH.ID") |>
   transform_sample_counts(function(x) x / sum(x))
 
 plot_bar(ps_s_disease, fill = "Species") +
+  scale_x_discrete(labels = c("D006262" = "Healthy", "D003924" = "T2D")) +
   theme_bw() +
-  labs(title = "Top 10 species by disease group")
+  labs(x = "Disease group", y = "Relative abundance",
+       title = "Top 10 species by disease group")
 ```
 
 # 5. Diagnostics

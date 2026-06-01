@@ -59,7 +59,7 @@ Then, is the data balanced across ProjectID and Country?
 table(sample_data(ps_genus)$Project.ID, useNA = "ifany")
 table(sample_data(ps_genus)$Country,    useNA = "ifany")
 ```
-No, not at all. Very few european samples, a few american samples and a lot of chinese samples.
+No, not at all. Very few american samples, a few european samples and a lot of chinese samples.
 
 Then checking healthy/sick across the different ProjectIDs and Countries.
 ```{r balance-crosstabs}
@@ -133,7 +133,7 @@ plot_ordination(ps_rel, ord_bray, color = "Disease.MESH.ID") +
                      labels = c("D006262" = "Healthy", "D003924" = "T2D"),
                      name   = "Disease") +
   theme_bw() +
-  labs(title = "Bray–Curtis PCoA — coloured by disease (full data)")
+  labs(title = "Bray–Curtis PCoA — disease (full data, genus)")
 ```
 Somewhat interesting at first glance. A small T2D cluster in lower left corner. Otherwise pretty mixed.
 We suspect this might be to due to the data imbalance introduced by the ProjectIDs.
@@ -147,9 +147,10 @@ plot_ordination(ps_rel, ord_bray, color = "Project.ID") +
                                 "PRJNA422434" = "purple"),
                      name = "Project") +
   theme_bw() +
-  labs(title = "Bray–Curtis PCoA — coloured by project (full data)")
+  labs(title = "Bray–Curtis PCoA — project (full data, genus)")
 ```
 This shows a pretty clear pattern. The ProjectIDs are different - but are they significantly different?
+And also, the T2D cluster in the lower left corner was just an artefact of the two projects (non-chinese) having no healthy controls. 
 
 Permanova followed by Betadispersion tests...
 ```{r permanova}
@@ -173,8 +174,8 @@ The p-value for dispersion in regards to Project.ID is still significant but not
 
 Very pretty plots supporting the above.
 ```{r betadisper-plots, fig.width=7, fig.height=5}
-plot(disp_disease, main = "disp_disease")
-plot(disp_project, main = "disp_project")
+plot(disp_disease, main = "Dispersion by disease")
+plot(disp_project, main = "Dispersion by project")
 ```
 
 # 6. Alpha diversity by project
@@ -190,7 +191,11 @@ plot_richness(
   geom_boxplot() +
   scale_color_manual(values = c("PRJEB1786"   = "orange",
                                 "PRJNA299502" = "forestgreen",
-                                "PRJNA422434" = "purple"))
+                                "PRJNA422434" = "purple"),
+                     name = "Project") +
+  theme_bw() +
+  labs(x = "Project", y = "Shannon",
+       title = "Shannon diversity by project (full data, genus)")
 ```
 This also might explain why T2D seems to have significantly higher alpha diversity! 
 Only healthy people from china and samples from china (PRJNA422434) has lower alpha diversity than samples from the other ProjectIDs.

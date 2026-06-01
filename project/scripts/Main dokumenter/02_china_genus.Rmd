@@ -124,5 +124,5 @@ anova(disp_disease)
 ```
 
 ```{r betadisper-plot, fig.width=7, fig.height=5}
-plot(disp_disease, main = "disp_disease")
+plot(disp_disease, main = "Dispersion by disease")
 ```
