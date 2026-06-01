@@ -44,7 +44,7 @@ library(microbiome)
 ## Load and inspect the data
 
 ```{r load-data}
-load("project/data/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+load("project/data/D003924_Diabetes_Mellitus,_T/genus/D003924_phyloseq_updated_genus.RData")
 ps <- subset_samples(pylsq, Project.ID == "PRJNA422434")
 rm(pylsq)
 

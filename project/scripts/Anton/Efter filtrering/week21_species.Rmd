@@ -42,7 +42,7 @@ library(microbiome)
 ## Load and filter species data
 
 ```{r load-data}
-load("project/data/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
+load("project/data/D003924_Diabetes_Mellitus,_T/species/D003924_phyloseq_updated_species.RData")
 ps <- subset_samples(pylsq, Project.ID == "PRJNA422434")
 rm(pylsq)
 
@@ -505,7 +505,7 @@ ps_clr <- transform_sample_counts(ps, function(x) {
   log(x) - mean(log(x))
 })
 otu_clr  <- as(otu_table(ps_clr), "matrix") %>% t() %>% as.data.frame()
-meta_clr <- data.frame(sample_data(ps_clr))
+meta_clr <- as(sample_data(ps_clr), "matrix") %>% as.data.frame()
 tax_clr  <- as(tax_table(ps_clr), "matrix") %>% as.data.frame()
 ```
 
@@ -1150,8 +1150,8 @@ rda_clr_comparison %>%
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     geom_point(alpha = 0.65, size = 2) +
     scale_color_manual(values = c(
-      "CLR significant, same direction"     = "#2E8B57",
-      "CLR significant, opposite direction" = "#E67E22",
+      "CLR significant, same direction"     = "red",
+      "CLR significant, opposite direction" = "blue",
       "CLR not significant"                 = "grey70"
     )) +
     labs(x = "CLR disease estimate (T2D vs Healthy)",

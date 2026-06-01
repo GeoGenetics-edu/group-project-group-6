@@ -1,0 +1,242 @@
+---
+title: "1 — Full dataset (genus level): exploration, diversity and cohort structure"
+author: "Group 6"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Purpose
+
+This is the first file of the analysis. It works on the **full dataset at genus level** (all three projects, no filtering) and has two jobs:
+
+1. **Describe the dataset** — what taxa/samples/metadata we have, and whether the data are balanced across disease status, country and project.
+2. **Run diversity on the full data** — alpha (Shannon, Simpson) and beta (Bray–Curtis) by disease, plus the same beta ordination coloured by project.
+
+The headline finding of this file is **structural**: the three contributing projects are not balanced for disease, and cohort (project/country) is a major driver of community variation. That is what motivates restricting the downstream analysis to the single case–control cohort (China, `PRJNA422434`) in file 2.
+
+# 1. Libraries
+
+```{r libraries}
+library(phyloseq)
+library(vegan)
+library(ggplot2)
+library(dplyr)
+library(tibble)
+library(tidyr)
+```
+
+> *Taught in: W20-01 (phyloseq + tidyverse), W20-03 (`vegan` for distances/ordination/PERMANOVA).*
+
+# 2. Load and explore the genus phyloseq object
+
+```{r load}
+load("project/data/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+ps_genus <- pylsq
+rm(pylsq)
+
+ps_genus
+```
+
+```{r explore}
+nsamples(ps_genus)
+ntaxa(ps_genus)
+rank_names(ps_genus)
+sample_variables(ps_genus)
+head(sample_data(ps_genus))
+```
+
+> *Taught in: W20-01 §"Inspect the components" (`nsamples`, `ntaxa`, `rank_names`, `sample_variables`, `sample_data`).*
+
+The object holds genus-level **relative abundances** (MetaPhlAn output): values are between 0 and 1 and per-sample sums are ≤ 1 (the shortfall is unmapped reads). There are no raw counts and no singletons — both are consequences of the upstream MetaPhlAn pipeline, confirmed by the teaching team.
+
+# 3. Is the dataset balanced?
+
+Before any test we check how the samples are distributed across the grouping variable (disease) and the potential confounders (project, country).
+
+## 3.1 Disease status
+
+```{r balance-disease}
+table(sample_data(ps_genus)$Disease.MESH.ID, useNA = "ifany")
+```
+
+`D003924` = Type 2 Diabetes (T2D), `D006262` = Healthy control.
+
+## 3.2 Project and country
+
+```{r balance-project-country}
+table(sample_data(ps_genus)$Project.ID,  useNA = "ifany")
+table(sample_data(ps_genus)$Country,      useNA = "ifany")
+```
+
+## 3.3 Disease × project and disease × country (the key cross-tabs)
+
+```{r balance-crosstabs}
+table(sample_data(ps_genus)$Project.ID, sample_data(ps_genus)$Disease.MESH.ID)
+table(sample_data(ps_genus)$Country,    sample_data(ps_genus)$Disease.MESH.ID)
+```
+
+> *Taught in: W20-01 §"Inspect the components" (metadata tabulation); cross-cohort exploration explicitly recommended by the teaching team before any filtering.*
+
+**Reading the cross-tabs.** Two of the three projects (`PRJEB1786` = Europe, `PRJNA299502` = USA) contain **only T2D samples and no healthy controls**. Every healthy control comes from the Chinese cohort (`PRJNA422434`), which is the only project with both groups. So in the full data, "disease status" is partly confounded with "which study/country a sample came from." We quantify the consequences below and act on them in file 2.
+
+# 4. Alpha diversity by disease (full data)
+
+We use **Shannon** and **Simpson**. Both work directly on relative abundances (they need no integer counts), and they weight the community differently — Shannon is balanced across rare and common taxa, Simpson is dominated by the most abundant taxa — so agreement between them is a robustness check.
+
+```{r alpha-table}
+alpha <- estimate_richness(ps_genus, measures = c("Shannon", "Simpson")) |>
+  rownames_to_column("sample_id")
+
+meta <- sample_data(ps_genus) |>
+  data.frame() |>
+  rownames_to_column("sample_id")
+
+alpha_div <- inner_join(alpha, meta, by = "sample_id") |>
+  mutate(Disease = ifelse(Disease.MESH.ID == "D003924", "T2D", "Healthy"))
+
+head(alpha_div)
+```
+
+> *Taught in: W20-02 §2 — `estimate_richness()` (Shannon, Simpson) and joining to `sample_data()`.*
+
+## 4.1 Visualise
+
+```{r alpha-plot, fig.width=8, fig.height=4}
+alpha_div |>
+  pivot_longer(c(Shannon, Simpson), names_to = "metric", values_to = "value") |>
+  ggplot(aes(x = Disease, y = value, fill = Disease)) +
+    geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+    geom_jitter(width = 0.2, alpha = 0.3, size = 0.7) +
+    facet_wrap(~ metric, scales = "free_y") +
+    scale_fill_manual(values = c("Healthy" = "#56B4E9", "T2D" = "#E74C3C")) +
+    theme_bw() +
+    theme(legend.position = "none") +
+    labs(x = NULL, y = "Alpha diversity",
+         title = "Alpha diversity by disease status (full data, genus level)")
+```
+
+> *Taught in: W20-02 §"Visualising alpha diversity" (boxplot + jitter by group).*
+
+## 4.2 Test (Wilcoxon rank-sum)
+
+Microbiome diversity values are non-normal, so we use the non-parametric Wilcoxon rank-sum test rather than a t-test.
+
+```{r alpha-wilcox}
+wilcox.test(Shannon ~ Disease.MESH.ID, data = alpha_div)
+wilcox.test(Simpson ~ Disease.MESH.ID, data = alpha_div)
+```
+
+> *Taught in: W20-02 §"Statistical testing of alpha diversity" (`wilcox.test`); Wilcoxon-over-t-test rationale: Alberdi reading §3.*
+
+**Note.** This is the *full-data* comparison and is therefore confounded by cohort (see §3): the healthy group is entirely Chinese, while the T2D group is a mix of countries. We re-run this comparison cleanly within the single Chinese cohort in file 2; treat the numbers here as descriptive of the pooled data, not as the disease effect.
+
+# 5. Beta diversity by disease (full data, Bray–Curtis)
+
+We convert to relative abundance and compute **Bray–Curtis** distance (abundance-based), then ordinate with PCoA. Bray–Curtis is sensitive to per-sample totals, so we normalise each sample to sum to 1 first.
+
+```{r beta-dist}
+ps_rel    <- transform_sample_counts(ps_genus, function(x) x / sum(x))
+bray_dist <- distance(ps_rel, method = "bray")
+ord_bray  <- ordinate(ps_rel, method = "PCoA", distance = bray_dist)
+
+sample_df <- sample_data(ps_rel) |> data.frame()
+```
+
+> *Taught in: W20-03 §2–§3 — `transform_sample_counts()` to relative abundance, `distance(method = "bray")`, `ordinate(method = "PCoA")`.*
+
+## 5.1 PCoA coloured by disease
+
+```{r pcoa-disease, fig.width=8, fig.height=5}
+plot_ordination(ps_rel, ord_bray, color = "Disease.MESH.ID") +
+  geom_point(size = 2, alpha = 0.7) +
+  stat_ellipse(level = 0.95) +
+  scale_color_manual(values = c("D006262" = "#56B4E9", "D003924" = "#E74C3C"),
+                     labels = c("D006262" = "Healthy", "D003924" = "T2D"),
+                     name   = "Disease") +
+  theme_bw() +
+  labs(title = "Bray–Curtis PCoA — coloured by disease (full data)")
+```
+
+## 5.2 PCoA coloured by project (same points, same positions)
+
+```{r pcoa-project, fig.width=8, fig.height=5}
+plot_ordination(ps_rel, ord_bray, color = "Project.ID") +
+  geom_point(size = 2, alpha = 0.7) +
+  stat_ellipse(level = 0.95) +
+  scale_color_manual(values = c("PRJEB1786"   = "orange",
+                                "PRJNA299502" = "forestgreen",
+                                "PRJNA422434" = "purple"),
+                     name = "Project") +
+  theme_bw() +
+  labs(title = "Bray–Curtis PCoA — coloured by project (full data)")
+```
+
+> *Taught in: W20-03 §3 — `plot_ordination()` coloured by a metadata variable; 95% ellipses are standard ggplot presentation.*
+
+**Reading the two plots.** They show the *same samples in the same positions* — only the colouring differs. If the disease colouring traces the same shape as the project colouring, the apparent "disease" separation is being driven by cohort membership rather than by disease.
+
+## 5.3 PERMANOVA and dispersion
+
+We test composition formally with PERMANOVA (`adonis2`) and check the dispersion assumption with `betadisper` — for **disease** and, separately, for **project**.
+
+```{r permanova}
+# Disease
+adonis2(bray_dist ~ Disease.MESH.ID, data = sample_df, permutations = 999)
+# Project
+adonis2(bray_dist ~ Project.ID,      data = sample_df, permutations = 999)
+```
+
+```{r betadisper}
+# Disease
+disp_disease <- betadisper(bray_dist, sample_df$Disease.MESH.ID)
+anova(disp_disease)
+# Project
+disp_project <- betadisper(bray_dist, sample_df$Project.ID)
+anova(disp_project)
+```
+
+> *Taught in: W20-03 §4 — `adonis2()` PERMANOVA and `betadisper()` + `anova()` for homogeneity of dispersion. PERMANOVA detects centroid and/or dispersion differences, so the two are always reported together.*
+
+**Interpretation.** Compare the R² of `Project.ID` with that of `Disease.MESH.ID`: project explains a much larger share of community variation than disease does, and the disease "effect" on the full data is inseparable from the cohort effect. This is the multivariate counterpart of the cross-tab finding in §3 and the second line of evidence for restricting to a single cohort.
+
+# 6. Alpha diversity by project (the cohort effect on diversity)
+
+Finally we show the cohort effect on *within-sample* diversity directly. Because all healthy controls come from one project, any project-level diversity gradient feeds straight into the full-data disease comparison.
+
+```{r alpha-by-project, fig.width=8, fig.height=5}
+plot_richness(
+  ps_genus,
+  x        = "Project.ID",
+  color    = "Project.ID",
+  measures = "Shannon"
+) +
+  geom_boxplot() +
+  scale_color_manual(values = c("PRJEB1786"   = "orange",
+                                "PRJNA299502" = "forestgreen",
+                                "PRJNA422434" = "purple"))
+```
+
+```{r kruskal-project}
+kruskal.test(Shannon ~ Project.ID, data = alpha_div)
+```
+
+> *Taught in: W20-02 — `plot_richness()` by group, and Kruskal-Wallis (the multi-group form of the rank-sum test) for comparing diversity across more than two groups.*
+
+**Interpretation.** Shannon diversity differs significantly across the three projects, decreasing Europe (`PRJEB1786`) > USA (`PRJNA299502`) > China (`PRJNA422434`). Crucially, the healthy controls all sit in the **lowest-diversity** Chinese cohort, so a naïve full-data "T2D vs Healthy" comparison would be biased toward "T2D > Healthy" diversity as a cohort artefact — exactly the pattern seen in §4.
+
+# 7. Conclusion of file 1
+
+- The three projects are **not balanced for disease**: two are case-only, and all healthy controls are Chinese (§3).
+- On the full data, **project explains far more community variation than disease** (§5), and project also drives a clear alpha-diversity gradient (§6).
+- Therefore the full-data disease comparisons (§4–§5) are confounded by cohort and are **not interpretable as disease effects**.
+
+**Next step (file 2):** restrict to the single case–control cohort (`PRJNA422434`, China) and re-run alpha and beta diversity there, where disease and cohort are no longer confounded.

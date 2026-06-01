@@ -19,7 +19,7 @@ library(effectsize)
 
 ## loading dataset on genus level
 ```{r}
-load("project/data/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+load("project/data/D003924_Diabetes_Mellitus,_T/genus/D003924_phyloseq_updated_genus.RData")
 ps_genus <- pylsq
 # ps_genus <- subset_samples(ps_genus, Project.ID == "PRJNA422434") only china
 rm(pylsq)
@@ -142,6 +142,24 @@ Interpretation: All three diversity metrics — capturing different parts of the
 ```{r}
 rank_biserial(Shannon ~ Disease.MESH.ID, data = alpha_div)
 ```
+
+# Shannon diversity by Project (cohort effect on alpha diversity)
+```{r}
+plot_richness(
+  ps_genus,
+  x        = "Project.ID",
+  color    = "Project.ID",
+  measures = "Shannon"
+) +
+  geom_boxplot() +
+  scale_color_manual(values = c(
+    "PRJEB1786"   = "orange",
+    "PRJNA299502" = "forestgreen",
+    "PRJNA422434" = "purple"
+  ))
+```
+Shannon diversity decreases Europe (PRJEB1786) > USA (PRJNA299502) > China (PRJNA422434). Because all healthy controls come from the lowest-diversity Chinese cohort, the full-data "disease" comparison is confounded by project — motivating the China-only restriction.
+
 # Transform to relative abundance
 ```{r}
 ps_rel <- transform_sample_counts(ps_genus, function(x) x / sum(x))
