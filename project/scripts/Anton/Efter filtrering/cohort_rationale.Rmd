@@ -9,7 +9,7 @@ output:
     theme: flatly
 ---
 
-```{r setup, include=FALSE}
+```{r setup}
 knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 ```

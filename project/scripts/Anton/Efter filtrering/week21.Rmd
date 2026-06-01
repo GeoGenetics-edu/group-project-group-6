@@ -80,6 +80,8 @@ plot_bar(ps_rel, fill = "Species") +
 
 The data is already at genus level (58 taxa) — no `tax_glom` needed. Legend hidden because 58 categories are unreadable.
 
+> **Taxonomy note (stated, not altered).** We keep the lineage columns exactly as the phyloseq object stores them. Note that reference-based profiling (MetaPhlAn) could not resolve every taxon to species, so the deepest confident assignment is placed in the lower rank columns as a placeholder. As a result, for many lineages the rank columns read **offset by one** — e.g. taxon 841 has `Genus = g__Lachnospiraceae` (a family) and `Species = s__Roseburia` (a genus). So in this file, when a label is drawn from the `Species` column it is in practice the **genus** (reported as e.g. *Roseburia* sp.), and the `Genus` column is the **family**. We do **not** edit the object; we simply read the deepest available name and interpret accordingly. The statistics are keyed on the feature id (`taxon`) and are unaffected by this.
+
 ```{r build-dat-rel}
 dat_rel <- otu_rel %>%
   rownames_to_column("sample_id") %>%
@@ -88,7 +90,7 @@ dat_rel <- otu_rel %>%
   left_join(tax_rel  %>% rownames_to_column("taxon"),     by = "taxon")
 ```
 
-> *Taught in: W21 reference Rmd §2 (the hidden chunk that builds the long `dat_rel` table used by all relative-abundance analyses).*
+> *Taught in: W21 reference Rmd §2 (the hidden chunk that builds the long `dat_rel` table). `Genus`/`Species` are carried through exactly as stored — see the taxonomy note above.*
 
 # Univariate statistics
 
@@ -157,7 +159,7 @@ dat_rel %>%
   filter(Disease.MESH.ID == "D003924",
          taxon %in% example_taxa,
          rel_abund > 0) %>%
-  mutate(label = Species) %>%
+  mutate(label = make.unique(as.character(Species), sep = "_")) %>%
   ggplot(aes(x = rel_abund)) +
     geom_histogram(bins = 20, fill = "steelblue", color = "white") +
     facet_wrap(~ label, scales = "free") +
@@ -174,7 +176,7 @@ dat_rel %>%
 ```{r qq-plots, fig.width=10, fig.height=6}
 dat_rel %>%
   filter(Disease.MESH.ID == "D003924", taxon %in% example_taxa) %>%
-  mutate(label = Species) %>%
+  mutate(label = make.unique(as.character(Species), sep = "_")) %>%
   ggplot(aes(sample = rel_abund)) +
     stat_qq(size = 0.8, alpha = 0.6) +
     stat_qq_line(color = "red", linetype = "dashed") +
@@ -304,7 +306,7 @@ bind_rows(
 ) %>%
   distinct() %>%
   mutate(
-    label = Species,
+    label = make.unique(as.character(Species), sep = "_"),
     direction = ifelse(log2_fc > 0, "T2D-enriched", "T2D-depleted")
   ) %>%
   ggplot(aes(x = reorder(label, -q_value), y = log2_fc, fill = direction)) +
@@ -437,7 +439,7 @@ bind_rows(
 ) %>%
   distinct() %>%
   mutate(
-    label = Species,
+    label = make.unique(as.character(Species), sep = "_"),
     direction = ifelse(estimate > 0, "T2D-enriched", "T2D-depleted")
   ) %>%
   ggplot(aes(x = reorder(label, -q_value), y = estimate, fill = direction)) +
@@ -574,7 +576,7 @@ bind_rows(
 ) %>%
   distinct() %>%
   mutate(
-    label = Species,
+    label = make.unique(as.character(Species), sep = "_"),
     direction = ifelse(estimate > 0, "T2D-enriched", "T2D-depleted")
   ) %>%
   ggplot(aes(x = reorder(label, -q_value), y = estimate, fill = direction)) +
@@ -610,7 +612,7 @@ dat_clr <- otu_clr %>%
   left_join(tax_clr  %>% rownames_to_column("taxon"),     by = "taxon")
 ```
 
-> *Taught in: W21 reference Rmd §9 (the hidden chunk that reshapes CLR values into the long `dat_clr` table).*
+> *Taught in: W21 reference Rmd §9 (the hidden chunk that reshapes CLR values into the long `dat_clr` table). `Genus`/`Species` are kept exactly as stored — see the taxonomy note above.*
 
 ```{r clr-results}
 clr_disease_adjusted_sex_results <- dat_clr %>%
@@ -729,7 +731,7 @@ bind_rows(
 ) %>%
   distinct() %>%
   mutate(
-    label = Species,
+    label = make.unique(as.character(Species), sep = "_"),
     direction = ifelse(estimate > 0, "T2D-enriched", "T2D-depleted")
   ) %>%
   ggplot(aes(x = reorder(label, -q_value), y = estimate, fill = direction)) +
@@ -985,7 +987,7 @@ comparison_results %>%
 ```{r heatmap, fig.width=8, fig.height=8}
 heatmap_data <- comparison_results %>%
   filter(wilcox_q < 0.05 | glm_q < 0.05 | glm_adj_q < 0.05 | clr_q < 0.05) %>%
-  mutate(label = Species) %>%
+  mutate(label = make.unique(as.character(Species), sep = "_")) %>%
   select(label,
          wilcox_q, glm_q, glm_adj_q, clr_q,
          wilcox_log2fc, glm_estimate, glm_adj_estimate, clr_estimate) %>%
@@ -1157,7 +1159,7 @@ top_species_scores <- scores(rda_disease, display = "species") %>%
   rownames_to_column("taxon") %>%
   inner_join(rda_taxa %>% head(10), by = "taxon") %>%
   left_join(tax_clr %>% rownames_to_column("taxon"), by = "taxon") %>%
-  mutate(label = Species)
+  mutate(label = make.unique(as.character(Species), sep = "_"))
 
 site_range    <- max(abs(c(site_scores$RDA1, site_scores$RDA2)))
 arrow_scale   <- site_range * 0.8 / max(sqrt(biplot_scores$RDA1^2 + biplot_scores$RDA2^2))
@@ -1202,7 +1204,7 @@ rda_taxa %>%
   head(20) %>%
   left_join(tax_clr %>% rownames_to_column("taxon"), by = "taxon") %>%
   mutate(
-    label     = Species,
+    label     = make.unique(as.character(Species), sep = "_"),
     direction = ifelse(rda1_loading > 0, "T2D-associated", "Healthy-associated")
   ) %>%
   ggplot(aes(x = reorder(label, rda1_loading), y = rda1_loading, fill = direction)) +
@@ -1266,6 +1268,63 @@ rda_clr_comparison %>%
 ```
 
 > *Taught in: W21 reference Rmd §12 (final table of the top 20 RDA-loading taxa with their CLR estimate, q-value and direction agreement).*
+
+## Phylogenetic context of the differential genera
+
+W20-01 attaches a phylogenetic tree to the phyloseq object and visualises it with `plot_tree()`. Here we reuse that to ask a community-level question: **are the T2D-associated and Healthy-associated genera scattered across the tree, or clustered in particular lineages?** Lineage clustering would suggest the disease signal tracks a coarse phylogenetic/functional group (e.g. a whole clade of fibre fermenters) rather than scattered individual genera.
+
+Each tip is coloured by its direction in the **primary CLR model** (adjusted for Sex + Age). Samples are merged into the two disease groups so the abundance points stay readable (two points per tip instead of 359).
+
+```{r da-tree, fig.width=9, fig.height=10}
+# Direction + significance per genus, taken from the primary CLR-adjusted model
+da_dir <- clr_disease_adjusted_sex_results %>%
+  transmute(
+    taxon,
+    DA = case_when(
+      q_value < 0.05 & estimate > 0 ~ "T2D-enriched",
+      q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
+      TRUE                          ~ "n.s."
+    )
+  )
+
+# Splice the DA direction into the taxonomy table of the genus object (which carries
+# the tree). We do NOT alter the lineage columns — tips are labelled with the
+# `Species` column exactly as stored (which, for this object, holds the genus name;
+# see the taxonomy note above).
+tt <- as.data.frame(as(tax_table(ps), "matrix")) %>%
+  rownames_to_column("taxon") %>%
+  left_join(da_dir, by = "taxon") %>%
+  mutate(DA = ifelse(is.na(DA), "n.s.", DA))
+
+ps_tree <- ps
+tax_table(ps_tree) <- phyloseq::tax_table(
+  tt %>% column_to_rownames("taxon") %>% as.matrix()
+)
+
+# Merge to the two disease groups so plot_tree shows 2 abundance points per tip, not 359
+ps_tree_grp <- merge_samples(ps_tree, group = "Disease.MESH.ID")
+
+plot_tree(
+  ps_tree_grp,
+  color      = "DA",
+  label.tips = "Species",
+  ladderize  = "left",
+  size       = "abundance",
+  text.size  = 2.6
+) +
+  scale_color_manual(values = c(
+    "T2D-enriched" = "#E74C3C",
+    "T2D-depleted" = "#3498DB",
+    "n.s."         = "grey75"
+  )) +
+  labs(title = "Genus phylogeny coloured by differential-abundance direction",
+       subtitle = "Tip colour = direction in the primary CLR model (q < 0.05); grey = not significant",
+       color = "Direction")
+```
+
+> *Taught in: W20-01 §"Visualising the phylogenetic tree" (`plot_tree`, tree attached to the phyloseq object) and §"Agglomerating taxa" (`tax_table` manipulation + `make.unique`). Colouring tips by a `tax_table` column and `merge_samples` are taught phyloseq operations (W20-01 handling section). The DA direction column is spliced in from the CLR model (W21 §9).*
+>
+> **Caveat (read before interpreting):** the attached tree is a GTDB **taxonomy cladogram** — its branch lengths are almost all zero. So this figure shows *taxonomic* grouping (who sits in which family/order), **not** true evolutionary distance, and should be read as "are the differential genera taxonomically clustered?" rather than as a phylogenetic-distance statement. This is also why we do not compute UniFrac (see `beta_diversity.Rmd`).
 
 ```{r}
 # Inside one of the Rmds

@@ -9,7 +9,7 @@ output:
     theme: flatly
 ---
 
-```{r setup, include=FALSE}
+```{r setup}
 knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 ```
@@ -25,6 +25,8 @@ Beta diversity within the filtered Chinese cohort (`Project.ID == "PRJNA422434"`
 | **Aitchison** | CLR-transformed | Compositional log-ratio differences | **Yes** (Aitchison §7) |
 
 For each metric we run PCoA, PERMANOVA, and `betadisper`. PERMANOVA tests whether group centroids differ; `betadisper` tests whether within-group dispersions are homogeneous. A clean centroid-shift interpretation requires significant PERMANOVA with non-significant betadisper.
+
+**Two taught options we considered and did not use.** W20-03 also teaches **NMDS** as an ordination and the `distance()` function can compute **UniFrac** (phylogenetic). We use **PCoA** rather than NMDS because PCoA is metric (its axes preserve the actual distances, so the % variance explained is meaningful) and because it is the natural visual companion to `adonis2`, which partitions the same distance matrix — NMDS optimises rank order only and gives no variance decomposition to line up with PERMANOVA. We do **not** use UniFrac because, although both phyloseq objects carry a tree, that tree is a GTDB taxonomy cladogram whose branch lengths are almost all zero; UniFrac on near-zero branch lengths degenerates toward the unweighted membership signal we already capture with Jaccard, so it would add little beyond the three metrics above. Bray–Curtis (abundance), Jaccard (membership) and Aitchison (compositional) therefore span the informative axes for this dataset.
 
 # 1. Libraries
 
