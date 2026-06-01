@@ -60,7 +60,7 @@ Expected: 187 T2D + 172 Healthy = 359 samples, ~173 species.
 ```{r build-rel}
 ps_rel   <- transform_sample_counts(ps, function(x) x / sum(x))
 otu_rel  <- as(otu_table(ps_rel), "matrix") %>% t() %>% as.data.frame()
-meta_rel <- data.frame(sample_data(ps_rel))
+meta_rel <- as(sample_data(ps_rel), "matrix") %>% as.data.frame()
 tax_rel  <- as(tax_table(ps_rel), "matrix") %>% as.data.frame()
 ```
 
@@ -1185,3 +1185,15 @@ For the report, the most informative comparisons to make when both Rmds have bee
 3. **The BMI-sensitivity scatter.** Compare which hits survive BMI adjustment at both levels. Hits surviving at both levels are the most robust candidates for the metabolic story.
 
 4. **The RDA biplot.** Species-level arrows are more specific (named at species rank where possible). Compare arrow direction with the genus-level biplot — if a *Faecalibacterium* arrow points Healthy at genus level, the species-level biplot should show *F. prausnitzii*-specific or *F.* sp.-specific arrows aligned in the same direction. If they don't align, the genus-level signal was diluted by within-genus species heterogeneity — itself a biologically meaningful finding.
+
+## Caveat: many "species" rows are not resolved to species
+
+This is critical for any **functional / metabolic** interpretation of the species-level results. As shown by the labels in the plots above, the `Species` column at this level is a mix of three things:
+
+- **true species binomials** (e.g. `s__Haemophilus parainfluenzae`) — these *can* be assigned a metabolic role;
+- **genus names dressed as species** (e.g. `s__Faecalibacterium`, `s__Akkermansia`) — these are effectively genus-level rows that MetaPhlAn could not split further;
+- **family-level placeholders** (e.g. `s__Bacteroidaceae`, `s__Prevotellaceae`, `s__unclassified Lachnospiraceae`) — these are unresolved bins spanning many organisms with **heterogeneous metabolism**.
+
+**Consequence:** a significant `s__Bacteroidaceae` or `s__unclassified Lachnospiraceae` row cannot be mapped to a specific metabolic function, because the bin contains organisms with different functional profiles. The metabolic interpretation (see `synthesis.Rmd`) is therefore restricted to taxa resolved to a real species or to a functionally coherent genus; unresolved family-level rows are reported as differential but **not** assigned a metabolic guild. This is also part of why genus-level results are treated as the more reliable backbone (per the teacher's guidance): at genus level these same organisms aggregate into one interpretable row instead of being scattered across unresolved species-level bins.
+
+> *Interpretation/limitation note — not a course method. Flags that the `s__`-prefixed labels are rank-mixed (a property of this MetaPhlAn reference object), which bounds what can be claimed functionally at species level.*

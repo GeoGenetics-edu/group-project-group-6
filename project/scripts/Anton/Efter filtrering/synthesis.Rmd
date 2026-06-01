@@ -1,0 +1,349 @@
+---
+title: "Synthesis — genus↔species reconciliation and metabolic interpretation"
+author: "Anton"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+---
+
+```{r setup}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Purpose
+
+This document ties the two differential-abundance analyses (`week21.Rmd` genus, `week21_species.Rmd` species) together into the two pieces the report needs but neither single file delivers:
+
+1. **Genus ↔ species reconciliation** — for each differential genus, does the signal resolve to a specific species, or dilute across several? (Operationalises the teacher's guidance that a genus-level difference can be *more* reliable than the species-level one.)
+2. **Metabolic interpretation** — maps the differential taxa onto well-established gut-microbial metabolic guilds (SCFA producers, mucin degraders, bile-acid metabolisers, …) to answer the project's headline question: *which microbial metabolic activities differ between T2D and Healthy guts?*
+
+Both levels are summarised with the **same single headline method** used as primary throughout the project: the **CLR-adjusted-for-Sex+Age linear model** (W21 §9). This is a synthesis layer, not a re-run of the full pipeline.
+
+> **Scope note.** The reconciliation (taxonomy join) is a taught data operation. The metabolic-guild mapping is **literature-based interpretation, not a course method** — it is the curated-literature route flagged in the project plan, used because no reads/MAGs are available for PICRUSt2/FAPROTAX. Every guild assignment is sourced.
+
+> **⚠️ Taxonomy note (we keep the lineage as stored; we do not fix it).** Reference-based profiling (MetaPhlAn) could not resolve every taxon to species, so the deepest confident assignment is stored in the lower rank columns as a placeholder. The practical effect is that, for lineages carrying an unranked NCBI clade node (e.g. `Terrabacteria group`), the rank columns read **offset by one**: the genus appears in the **`Species`** column (e.g. `s__Roseburia`) and the family in the **`Genus`** column (`g__Lachnospiraceae`), while Proteobacteria (e.g. *Escherichia*) line up normally. **We do not alter any of this** — the lineage is shown exactly as the objects store it, and such taxa are reported at the depth the profiler supports (e.g. "*Roseburia* sp."). The only place we *read* a genus is to attach metabolic guilds (§5); for that we read the deepest assigned name (the `Species` column, else `Genus`) — a read for interpretation, not a change to the data. The statistics are keyed on the feature ID and are unaffected regardless.
+
+# 1. Libraries
+
+```{r libraries}
+library(phyloseq)
+library(dplyr)
+library(tibble)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(broom)
+```
+
+# 2. Load both levels (Chinese cohort)
+
+```{r load-data}
+load("project/data/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+ps_genus <- subset_samples(pylsq, Project.ID == "PRJNA422434")
+rm(pylsq)
+
+load("project/data/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
+ps_species <- subset_samples(pylsq, Project.ID == "PRJNA422434")
+rm(pylsq)
+
+ps_genus
+ps_species
+```
+
+> *Taught in: W20-01 (load phyloseq), W20-03 (`subset_samples`). Cohort filter rationale: `cohort_rationale.Rmd`.*
+
+## 2a. Documenting the taxonomy resolution limitation (we do not alter it)
+
+We **keep the lineage exactly as stored in the phyloseq objects** and simply document a property of reference-based taxonomic profiling here. Per the teaching team: MetaPhlAn could not confidently resolve every taxon to species, so the deepest confident assignment is placed in the lower rank columns as a placeholder. In practice this reads as the rank columns being **offset by one** for lineages that also carry an unranked NCBI clade node (e.g. `Terrabacteria group`) at the top — Firmicutes/Actinobacteria/Bacteroidetes show it; Proteobacteria do not. The row below makes it visible:
+
+```{r taxonomy-check}
+tt_g <- as.data.frame(as(tax_table(ps_genus), "matrix"))
+
+# 841 = the taxon we report as "Roseburia sp." (genus-resolved, species unknown)
+taxonomy_demo <- t(tt_g["841", c("Phylum", "Class", "Order", "Family", "Genus", "Species")])
+colnames(taxonomy_demo) <- "Taxon 841"
+taxonomy_demo
+```
+
+Reading top to bottom: `Phylum = p__Terrabacteria group` (an NCBI clade, **not** a phylum) is the extra node; below it the genus `Roseburia` sits in the **Species** slot and the family `Lachnospiraceae` in the **Genus** slot. So for this taxon the deepest confident assignment is genus *Roseburia* — we report it as **"Roseburia sp."** (a *Roseburia*, species unknown). A taxon without the extra clade node (e.g. *Escherichia*, feature 561) lines up normally with `Species` left empty.
+
+For the metabolic mapping below we need the genus, so we **read** it from where the profiler stored it (the deepest non-empty rank) — purely to attach a guild. We do **not** modify the lineage; the original `Genus`/`Species` columns are shown as-is in the result tables.
+
+```{r genus-read-demo}
+# Read the genus from the deepest assigned rank (Species if present, else Genus),
+# first token only. This is a read for interpretation — the object is unchanged.
+empty <- function(x) is.na(x) | x %in% c("", "s__", "g__")
+tt_g$genus_read <- sub("^[a-z]__", "",
+  ifelse(empty(tt_g$Species), tt_g$Genus, tt_g$Species))
+tt_g$genus_read <- sub(" .*$", "", tt_g$genus_read)
+
+tt_g[c("561", "841"), c("Genus", "Species", "genus_read")]
+```
+
+`genus_read` recovers the genus for both the offset row (`Roseburia`, from `Species`) and the aligned row (`Escherichia`, from `Genus`, since `Species` is empty) — without changing the stored lineage. This is the same read `run_clr_da()` uses to join guilds.
+
+> *Documentation note — not a course method, and not a modification of the data. States that the rank offset is a known reference-profiling resolution limit (confirmed in the raw `tax_table`, identical in the provider's `.xls`), and shows how we read the genus for guild mapping while leaving the lineage untouched. Statistics are keyed on the feature ID and are unaffected either way.*
+
+# 3. Headline method at both levels (CLR adjusted for Sex + Age)
+
+```{r clr-da-helper}
+# Run the primary CLR-adjusted-for-Sex+Age per-taxon model and return tidy results.
+# Identical model to week21.Rmd §9 / week21_species.Rmd, applied at one level.
+# Also READS a genus_key from the deepest assigned rank (for guild mapping only;
+# the lineage is left exactly as stored — see §2a).
+run_clr_da <- function(ps, level_label) {
+  ps_clr <- transform_sample_counts(ps, function(x) {
+    x <- x + 1e-9
+    log(x) - mean(log(x))
+  })
+  otu_clr  <- as(otu_table(ps_clr), "matrix") %>% t() %>% as.data.frame()
+  meta_clr <- data.frame(sample_data(ps_clr))
+  tax_clr  <- as(tax_table(ps_clr), "matrix") %>% as.data.frame()
+
+  res <- otu_clr %>%
+    rownames_to_column("sample_id") %>%
+    pivot_longer(-sample_id, names_to = "taxon", values_to = "clr") %>%
+    left_join(meta_clr %>% rownames_to_column("sample_id"), by = "sample_id") %>%
+    left_join(tax_clr  %>% rownames_to_column("taxon"),     by = "taxon") %>%
+    mutate(
+      Disease.MESH.ID = factor(Disease.MESH.ID, levels = c("D006262", "D003924")),
+      Sex             = factor(Sex,             levels = c("Female", "Male")),
+      Host.age        = as.numeric(Host.age)
+    ) %>%
+    group_by(taxon, Genus, Species) %>%
+    group_modify(~ broom::tidy(lm(clr ~ Disease.MESH.ID + Sex + Host.age, data = .x))) %>%
+    ungroup() %>%
+    filter(term == "Disease.MESH.IDD003924") %>%
+    mutate(
+      q_value = p.adjust(p.value, method = "BH"),
+      level   = level_label,
+      direction = case_when(
+        q_value < 0.05 & estimate > 0 ~ "T2D-enriched",
+        q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
+        TRUE                          ~ "n.s."
+      )
+    )
+
+  # ---- Read the genus for guild mapping (lineage left untouched; see §2a) ----
+  # We do NOT modify the stored columns. We only read the deepest assigned name
+  # from `Species` (else `Genus` when `Species` is empty) and take its first token
+  # as the genus, so we can attach metabolic guilds. The original `Genus`/`Species`
+  # remain in `res` and are what the result tables display.
+  empty <- function(x) is.na(x) | x %in% c("", "s__", "g__")
+  res$deepest_name <- sub("^[a-z]__", "", ifelse(empty(res$Species), res$Genus, res$Species))
+  res$genus_key    <- sub(" .*$", "", res$deepest_name)   # first token = genus, for guild join
+  res
+}
+
+clr_genus   <- run_clr_da(ps_genus,   "Genus")
+clr_species <- run_clr_da(ps_species, "Species")
+```
+
+> *Taught in: W21 reference Rmd §9 (`lm(clr ~ group + covariates)` per taxon, BH-adjusted). CLR closure §9; covariate adjustment Alberdi reading §5; BH/FDR §6. The `genus_key` derivation is the taxonomy-column fix described in the header.*
+
+## 3a. The differential genera (lineage shown as stored)
+
+`Genus` and `Species` are printed exactly as the object stores them (so `Genus` is the family and `Species` the genus for the offset lineages); `genus_read` is the genus we read from the deepest rank for interpretation, and would be reported as e.g. "*Roseburia* sp.".
+
+```{r genus-hits}
+clr_genus %>%
+  filter(q_value < 0.05) %>%
+  transmute(Genus, Species,            # as stored in the phyloseq object
+            genus_read = genus_key,     # genus read from the deepest assigned rank
+            estimate = round(estimate, 2),
+            q_value  = signif(q_value, 3),
+            direction) %>%
+  arrange(estimate)
+```
+
+# 4. Genus ↔ species reconciliation
+
+The reconciliation key is the genus read from the deepest assigned rank (`genus_key`) at both levels. For each genus that is **significant at genus level**, we list the species sharing that genus and ask whether they agree in direction and which (if any) clears FDR.
+
+```{r reconcile}
+clr_genus_k   <- clr_genus   %>% filter(!is.na(genus_key), genus_key != "")
+clr_species_k <- clr_species %>% filter(!is.na(genus_key), genus_key != "")
+
+sig_genera <- clr_genus_k %>%
+  filter(q_value < 0.05) %>%
+  transmute(genus_key,
+            genus_label    = genus_key,
+            genus_estimate = estimate,
+            genus_q        = q_value,
+            genus_dir      = direction)
+
+reconciliation <- sig_genera %>%
+  left_join(
+    clr_species_k %>%
+      select(genus_key, sp_label = deepest_name, Species,
+             sp_estimate = estimate, sp_q = q_value, sp_dir = direction),
+    by = "genus_key"
+  ) %>%
+  group_by(genus_label, genus_estimate, genus_q, genus_dir) %>%
+  summarise(
+    n_species         = sum(!is.na(Species)),
+    n_species_sig     = sum(sp_q < 0.05, na.rm = TRUE),
+    n_agree_direction = sum(sign(sp_estimate) == sign(genus_estimate), na.rm = TRUE),
+    top_species       = sp_label[which.max(abs(replace(sp_estimate, is.na(sp_estimate), 0)))][1],
+    resolution = case_when(
+      sum(!is.na(Species)) == 0           ~ "no species mapped",
+      sum(sp_q < 0.05, na.rm = TRUE) >= 1  ~ "resolves to species",
+      TRUE                                 ~ "diluted across species"
+    ),
+    .groups = "drop"
+  ) %>%
+  arrange(genus_q)
+
+reconciliation
+```
+
+Interpretation of `resolution`:
+
+- **resolves to species** — at least one species in the genus is itself FDR-significant, so the genus signal has a named species driver (report that species).
+- **diluted across species** — the genus is significant but no single species clears FDR; the effect is spread across several low-prevalence species. *Per the teacher's guidance, the genus result is reported as the reliable finding here.*
+- **no species mapped** — no species-level counterpart in the resolved panel.
+
+> *Taught in: data join / `tax_glom`-style aggregation logic (W20-01). The reconciliation rule itself is project synthesis.*
+
+```{r reconcile-plot, fig.width=9, fig.height=6}
+recon_long <- sig_genera %>%
+  inner_join(clr_species_k %>% select(genus_key, sp_estimate = estimate, sp_q = q_value),
+             by = "genus_key") %>%
+  mutate(
+    genus_label = reorder(genus_label, genus_estimate),
+    sp_sig      = ifelse(sp_q < 0.05, "species q < 0.05", "species n.s.")
+  )
+
+ggplot(recon_long, aes(x = sp_estimate, y = genus_label)) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_point(aes(x = genus_estimate), shape = 5, size = 3, colour = "black") +
+  geom_jitter(aes(colour = sp_sig), height = 0.15, width = 0, alpha = 0.8, size = 2) +
+  scale_colour_manual(values = c("species q < 0.05" = "#C0392B",
+                                 "species n.s."      = "grey65")) +
+  labs(x = "CLR disease estimate (T2D vs Healthy)",
+       y = "Genus (significant at genus level)",
+       colour = NULL,
+       title = "Genus signal vs its species members",
+       subtitle = "Black diamond = genus-level estimate; points = species within that genus") +
+  theme_bw()
+```
+
+# 5. Metabolic interpretation (literature-based)
+
+The curated guild lookup below assigns each gut genus to a **metabolic guild** with a sourced functional role, then joins it to the differential genera (`genus_key`).
+
+```{r guild-table}
+guilds <- tribble(
+  ~genus_key,             ~guild,                          ~metabolic_role,
+  "Faecalibacterium",     "Butyrate / SCFA producer",      "Major butyrate producer; anti-inflammatory (F. prausnitzii)",
+  "Roseburia",            "Butyrate / SCFA producer",      "Butyrate from dietary fibre",
+  "Eubacterium",          "Butyrate / SCFA producer",      "Butyrate; some bile-acid transformation",
+  "Coprococcus",          "Butyrate / SCFA producer",      "Butyrate producer",
+  "Anaerostipes",         "Butyrate / SCFA producer",      "Lactate-utilising butyrate producer",
+  "Subdoligranulum",      "Butyrate / SCFA producer",      "Butyrate producer",
+  "Butyrivibrio",         "Butyrate / SCFA producer",      "Butyrate producer",
+  "Oscillibacter",        "Butyrate / SCFA producer",      "Butyrate/valerate producer",
+  "Flavonifractor",       "Butyrate / SCFA producer",      "Butyrate; flavonoid degradation",
+  "Blautia",              "Acetate / SCFA producer",       "Acetate; H2 utilisation",
+  "Dorea",                "Acetate / SCFA producer",       "SCFA / H2 metabolism",
+  "Akkermansia",          "Mucin degrader",                "Mucin degradation; gut-barrier & metabolic health",
+  "Bacteroides",          "Polysaccharide fermenter",      "Broad glycan degradation; propionate; bile acids",
+  "Parabacteroides",      "Polysaccharide fermenter",      "Propionate; bile-acid metabolism",
+  "Prevotella",           "Fibre / plant-glycan fermenter","Complex plant polysaccharide fermentation",
+  "Alistipes",            "Bile-acid metaboliser",         "Bile-tolerant; propionate",
+  "Bifidobacterium",      "Lactate / acetate producer",    "Acetate/lactate; metformin-responsive; probiotic",
+  "Collinsella",          "Lactate / acetate producer",    "Actinobacterial fermenter; linked to host lipid metabolism",
+  "Lactobacillus",        "Lactate producer",              "Lactate; often increased in T2D",
+  "Weissella",            "Lactate producer",              "Lactic-acid bacterium",
+  "Enterococcus",         "Lactate producer",              "Lactic-acid bacterium; facultative",
+  "Streptococcus",        "Lactate producer (oral-origin)","Lactate; oral-origin; increased in T2D",
+  "Veillonella",          "Lactate utiliser -> propionate","Converts lactate to propionate",
+  "Megasphaera",          "Lactate utiliser -> SCFA",      "Lactate-utiliser; propionate/butyrate via acrylate pathway",
+  "Dialister",            "Propionate producer",           "Propionate via succinate pathway",
+  "Phascolarctobacterium","Propionate producer",           "Succinate-utilising propionate producer",
+  "Mitsuokella",          "Propionate / SCFA producer",    "Succinate/propionate; carbohydrate fermenter",
+  "Escherichia",          "Facultative / pro-inflammatory","LPS; facultative anaerobe; metformin-associated",
+  "Klebsiella",           "Facultative / pro-inflammatory","Facultative; pro-inflammatory",
+  "Lachnoclostridium",    "Bile-acid metaboliser",         "Clostridium-clade; bile-acid 7a-dehydroxylation (variable)",
+  "Clostridium",          "Bile-acid metaboliser",         "Bile-acid transformation (variable)",
+  "Ruminococcus",         "Resistant-starch degrader",     "Resistant starch / fibre degradation",
+  "Bilophila",            "Sulfite reducer / bile",        "Bile-driven sulfite reduction; H2S",
+  "Desulfovibrio",        "Sulfate reducer",               "H2S production; mucosal",
+  "Fusobacterium",        "Facultative / pro-inflammatory","Mucosa-associated; pro-inflammatory",
+  "Haemophilus",          "Facultative (oral-origin)",     "Facultative anaerobe; oral-origin"
+)
+
+guilds
+```
+
+> *Literature-based interpretation, NOT a course method. Key sources: Qin et al. 2012 (Nature, T2D MGWAS — butyrate-producer depletion, opportunist increase); Karlsson et al. 2013 (Nature, T2D in European women); Forslund et al. 2015 (Nature, metformin confounding); Sokol et al. 2008 (F. prausnitzii anti-inflammatory); Everard et al. 2013 & Dao et al. 2016 (Akkermansia & metabolic health); Louis & Flint 2017 (gut butyrate producers); Reichardt et al. 2014 / Koh et al. 2016 (SCFA pathways & propionate producers).*
+
+## 5a. Differential genera with their metabolic guild
+
+```{r genus-guild-join}
+genus_metabolic <- clr_genus_k %>%
+  filter(q_value < 0.05) %>%
+  left_join(guilds, by = "genus_key") %>%
+  mutate(guild = ifelse(is.na(guild), "Unassigned (no curated role)", guild)) %>%
+  select(genus = genus_key, Species, direction, estimate, q_value, guild, metabolic_role) %>%
+  arrange(direction, estimate)
+
+genus_metabolic
+```
+
+```{r guild-figure, fig.width=9, fig.height=5}
+genus_metabolic %>%
+  mutate(genus = reorder(genus, estimate)) %>%
+  ggplot(aes(x = estimate, y = genus, fill = guild)) +
+  geom_col() +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey40") +
+  labs(x = "CLR disease estimate (T2D vs Healthy)",
+       y = NULL, fill = "Metabolic guild",
+       title = "Differential genera by metabolic guild",
+       subtitle = "Left = Healthy-enriched, right = T2D-enriched (CLR adjusted for Sex + Age)") +
+  theme_bw()
+```
+
+## 5b. Guild-level summary
+
+```{r guild-summary}
+guild_summary <- genus_metabolic %>%
+  group_by(guild, direction) %>%
+  summarise(n_genera = n(),
+            genera = paste(genus, collapse = ", "),
+            .groups = "drop") %>%
+  arrange(direction, desc(n_genera))
+
+guild_summary
+```
+
+# 6. Answering the headline question
+
+With the corrected labels, the genus-level result is a clean, literature-consistent metabolic signature:
+
+- **Healthy-enriched:** **butyrate producers** *Roseburia* and *Faecalibacterium* — the two flagship SCFA producers of the gut. Their depletion in T2D is the single most reproducible functional signature in the literature (Qin 2012; Karlsson 2013). Butyrate fuels colonocytes and is anti-inflammatory, so reduced butyrate-producing capacity is mechanistically tied to gut-barrier and metabolic dysfunction.
+- **T2D-enriched:** **lactate producers / lactate-utilising taxa** (*Lactobacillus*, *Megasphaera*). *Lactobacillus* enrichment in T2D is reported repeatedly (Qin 2012; Karlsson 2013) and is also **metformin-responsive**, so the alpha-diversity caveat (`alpha_diversity.Rmd` §10) applies — drug status is unmeasured (Forslund 2015).
+
+**Report sentence (fill numbers from §3a / §5):**
+
+> *"After adjusting for sex and age within the Chinese cohort, four genera were differentially abundant (CLR, q < 0.05): the butyrate producers Roseburia and Faecalibacterium were depleted in T2D, while the lactate-associated genera Lactobacillus and Megasphaera were enriched. This reproduces the canonical T2D functional signature — loss of SCFA-producing capacity — at the level our data support (taxonomy → curated function), without claiming gene-level evidence."*
+
+Three honesty rails for the exam:
+
+1. This is **taxonomy → inferred function**, not measured function — no MAGs/genes, so PICRUSt2/FAPROTAX were not possible; the guild table is curated and cited.
+2. Guilds are assigned at **genus** level using the corrected label; unresolved family-level bins (genus object `Species` = `s__Bacteroidaceae`, etc.) carry no guild.
+3. The **metformin confound** (Forslund 2015) is the standing limitation on any T2D-enriched functional claim.
+
+# 7. Save outputs
+
+```{r save-outputs}
+#saveRDS(reconciliation,   "project/results/genus_species_reconciliation.rds")
+#saveRDS(genus_metabolic,  "project/results/genus_metabolic_guilds.rds")
+#saveRDS(guild_summary,    "project/results/guild_summary.rds")
+```
+
+> *Housekeeping (`saveRDS`) — not a course method; persists the synthesis tables for the report.*

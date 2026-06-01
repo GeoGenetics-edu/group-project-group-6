@@ -665,10 +665,10 @@ adonis2(
 ## Number of permutations: 999
 ## 
 ## adonis2(formula = bray_dist ~ Disease.MESH.ID, data = sample_df, permutations = 999, strata = sample_df$Project.ID)
-##           Df SumOfSqs      R2      F Pr(&gt;F)  
-## Model      1    2.286 0.01422 6.2019  0.013 *
-## Residual 430  158.469 0.98578                
-## Total    431  160.755 1.00000                
+##           Df SumOfSqs      R2      F Pr(&gt;F)   
+## Model      1    2.286 0.01422 6.2019  0.007 **
+## Residual 430  158.469 0.98578                 
+## Total    431  160.755 1.00000                 
 ## ---
 ## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1</code></pre>
 <pre class="r"><code>adonis2(
@@ -705,10 +705,10 @@ adonis2(
 ## Number of permutations: 999
 ## 
 ## adonis2(formula = bray_dist_clean ~ Disease.MESH.ID, data = sample_df_clean, permutations = 999)
-##           Df SumOfSqs      R2      F Pr(&gt;F)   
-## Model      1    1.496 0.01144 4.1331  0.002 **
-## Residual 357  129.236 0.98856                 
-## Total    358  130.732 1.00000                 
+##           Df SumOfSqs      R2      F Pr(&gt;F)    
+## Model      1    1.496 0.01144 4.1331  0.001 ***
+## Residual 357  129.236 0.98856                  
+## Total    358  130.732 1.00000                  
 ## ---
 ## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1</code></pre>
 <pre class="r"><code># Also check dispersion on the clean subset
@@ -796,10 +796,10 @@ adonis2(aitch_dist_clean ~ Disease.MESH.ID, data = sample_df_clean, permutations
 ## Number of permutations: 999
 ## 
 ## adonis2(formula = aitch_dist_clean ~ Disease.MESH.ID, data = sample_df_clean, permutations = 999)
-##           Df SumOfSqs      R2      F Pr(&gt;F)   
-## Model      1    0.541 0.01098 3.9631  0.002 **
-## Residual 357   48.709 0.98902                 
-## Total    358   49.249 1.00000                 
+##           Df SumOfSqs      R2      F Pr(&gt;F)    
+## Model      1    0.541 0.01098 3.9631  0.001 ***
+## Residual 357   48.709 0.98902                  
+## Total    358   49.249 1.00000                  
 ## ---
 ## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1</code></pre>
 <pre class="r"><code>disp_a &lt;- betadisper(aitch_dist_clean, sample_df_clean$Disease.MESH.ID)

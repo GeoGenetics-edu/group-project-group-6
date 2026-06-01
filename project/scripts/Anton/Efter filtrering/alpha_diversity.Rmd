@@ -9,7 +9,7 @@ output:
     theme: flatly
 ---
 
-```{r setup, include=FALSE}
+```{r setup}
 knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 ```
@@ -76,12 +76,36 @@ head(alpha_all)
 
 > *Taught in: W20-02 §2 — `estimate_richness()` for Shannon/Simpson/InvSimpson. Joining the richness table to `sample_data()` follows the same practical.*
 
-Note: `Observed` is omitted because the OTU table contains relative abundances rather than integer counts, which is the data structure `Observed`/`Chao1`/`ACE` assume.
+`Shannon`/`Simpson`/`InvSimpson` work directly on the relative-abundance table. `Observed`/`Chao1`/`ACE`, however, assume integer counts and error on continuous relative abundances. W20-02 shows the correct route for non-count data: convert to **presence/absence** first, then count detected taxa. We add Observed that way so the metric is available without misusing the abundance values.
+
+```{r observed-pa}
+make_observed_df <- function(ps, level_label) {
+  ps_pa <- transform_sample_counts(ps, function(x) ifelse(x > 0, 1, 0))
+  estimate_richness(ps_pa, measures = "Observed") |>
+    rownames_to_column("sample_id") |>
+    mutate(level = level_label)
+}
+
+observed_all <- bind_rows(
+  make_observed_df(ps_genus_clean,   "Genus"),
+  make_observed_df(ps_species_clean, "Species")
+)
+
+# Attach Observed to the main table by sample_id + level
+alpha_all <- alpha_all |>
+  left_join(observed_all, by = c("sample_id", "level"))
+
+head(observed_all)
+```
+
+> *Taught in: W20-02 §2 — the practical builds `ps_pa <- transform_sample_counts(ps, function(x) ifelse(x > 0, 1, 0))` and runs `estimate_richness(ps_pa, measures = "Observed")`. Observed on presence/absence = the number of detected taxa per sample, which is well defined even though the raw table is relative abundance.*
+
+Observed is interpreted with care here: the taxon panel is fixed (a closed MetaPhlAn reference), so Observed reflects **how many of the reference taxa each sample carries**, not open-ended richness. A group difference in Observed is still meaningful (it says one group's communities are detectably broader), but it is bounded by the panel size.
 
 # 4. Wilcoxon tests per metric and level
 
 ```{r wilcoxon-tests}
-metrics_to_test <- c("Shannon", "Simpson", "InvSimpson")
+metrics_to_test <- c("Observed", "Shannon", "Simpson", "InvSimpson")
 levels_to_test  <- c("Genus", "Species")
 
 wilcox_results <- tibble()
@@ -172,10 +196,13 @@ A small |ρ| (< 0.1) and a non-significant p-value indicate no meaningful depth 
 ```{r plot-alpha, fig.width=9, fig.height=6}
 alpha_long <- alpha_all |>
   select(sample_id, level, Disease.MESH.ID,
-         Shannon, Simpson, InvSimpson) |>
-  pivot_longer(cols = c(Shannon, Simpson, InvSimpson),
+         Observed, Shannon, Simpson, InvSimpson) |>
+  pivot_longer(cols = c(Observed, Shannon, Simpson, InvSimpson),
                names_to = "metric", values_to = "value") |>
-  mutate(Disease = ifelse(Disease.MESH.ID == "D003924", "T2D", "Healthy"))
+  mutate(
+    Disease = ifelse(Disease.MESH.ID == "D003924", "T2D", "Healthy"),
+    metric  = factor(metric, levels = c("Observed", "Shannon", "Simpson", "InvSimpson"))
+  )
 
 ggplot(alpha_long, aes(x = Disease, y = value, fill = Disease)) +
   geom_boxplot(alpha = 0.7, outlier.shape = NA) +
@@ -186,7 +213,7 @@ ggplot(alpha_long, aes(x = Disease, y = value, fill = Disease)) +
   theme(legend.position = "none") +
   labs(x = NULL, y = "Alpha diversity",
        title = "Alpha diversity in the Chinese cohort",
-       subtitle = "Shannon, Simpson, Inverse Simpson at genus and species level")
+       subtitle = "Observed, Shannon, Simpson, Inverse Simpson at genus and species level")
 ```
 
 > *Taught in: W20-02 — boxplots of alpha diversity by group (`plot_richness` / ggplot boxplots) in the alpha-diversity practical.*
@@ -259,6 +286,20 @@ Reading this table:
 - Whether the same direction and significance hold at both genus and species levels is itself informative — disagreement between levels often reflects a finer-resolution structure (e.g. genus-level signal that is not driven by a particular dominant species). Per the teacher's guidance, a genus-level difference is not "less real" than a species-level one and is not disregarded when species is non-significant.
 
 The covariate-adjusted linear model tells you whether the Disease coefficient survives BMI / age / sex adjustment. A surviving coefficient is the cleanest claim of a disease-specific alpha-diversity effect.
+
+## Why is T2D *higher*, not lower, in diversity?
+
+The direction here is the opposite of the textbook "dysbiosis lowers diversity" expectation, so it deserves an explicit defense rather than being glossed over. Three points make the result interpretable rather than anomalous:
+
+1. **The T2D alpha-diversity literature is genuinely mixed, not uniformly "lower."** Unlike inflammatory bowel disease (where reduced diversity is consistent), T2D studies report higher, lower, and null diversity differences depending on cohort. A small T2D > Healthy difference is within the range of published findings, not a contradiction of them.
+
+2. **Metformin is the major confounder of the T2D microbiome.** Forslund et al. (2015, *Nature*) showed that much of the apparent T2D microbiome signature — including diversity and SCFA-producer shifts — is driven by **metformin treatment**, not the disease itself. Metformin alters the gut community (e.g. increasing *Escherichia* and some SCFA producers) and can raise apparent diversity. Treatment status is not available in this metadata, so we cannot adjust for it; this is the most likely single explanation and must be stated as a limitation.
+
+3. **Population and diet.** This is a single Chinese cohort with its own dietary and lifestyle baseline. Diversity differences of this magnitude are easily within the range that diet and population structure produce, which is exactly why we restricted to one cohort (so the *contrast* is clean even if the absolute level is population-specific).
+
+**Framing for the report / exam:** *"T2D samples showed slightly higher alpha diversity than controls across all four metrics, robust to sequencing depth and surviving Sex/Age/BMI adjustment. The direction is opposite to the dysbiosis stereotype but consistent with the mixed T2D literature; the most plausible driver is unmeasured metformin treatment (Forslund 2015), which we flag as a limitation because drug status is absent from the metadata."* The effect is reported as **small** (see `median_diff` and the modest R² in beta diversity), so we do not over-claim.
+
+> *Reference: interpretation/limitation discussion — not a course method. Forslund et al. 2015 (metformin confounding of the T2D gut microbiome) is the key citation; the depth check (§6) and covariate-adjusted model (§8) are the taught analyses that license the "robust and adjusted" part of the claim.*
 
 # 11. Save outputs
 
