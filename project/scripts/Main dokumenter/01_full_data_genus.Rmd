@@ -39,7 +39,7 @@ library(tidyr)
 # 2. Load and explore the genus phyloseq object
 
 ```{r load}
-load("project/data/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+load("project/data/D003924_Diabetes_Mellitus,_T/genus/D003924_phyloseq_updated_genus.RData")
 ps_genus <- pylsq
 rm(pylsq)
 
@@ -202,6 +202,13 @@ anova(disp_disease)
 # Project
 disp_project <- betadisper(bray_dist, sample_df$Project.ID)
 anova(disp_project)
+```
+
+The dispersion objects can be plotted directly: each point is a sample, projected into PCoA space, with a hull and centroid per group. Spread of a group's hull = its within-group dispersion.
+
+```{r betadisper-plots, fig.width=7, fig.height=5}
+plot(disp_disease, main = "disp_disease")
+plot(disp_project, main = "disp_project")
 ```
 
 > *Taught in: W20-03 §4 — `adonis2()` PERMANOVA and `betadisper()` + `anova()` for homogeneity of dispersion. PERMANOVA detects centroid and/or dispersion differences, so the two are always reported together.*

@@ -161,7 +161,13 @@ disp_disease <- betadisper(bray_dist, sample_df$Disease.MESH.ID)
 anova(disp_disease)
 ```
 
-> *Taught in: W20-03 §4 — `adonis2()` PERMANOVA and `betadisper()` + `anova()`. The two are reported together because PERMANOVA responds to centroid and/or dispersion differences.*
+The dispersion object can be plotted directly: each point is a sample in PCoA space, with a hull and centroid per disease group. The spread of each hull is that group's within-group dispersion — here the two hulls should overlap closely (similar spread), consistent with the non-significant betadisper.
+
+```{r betadisper-plot, fig.width=7, fig.height=5}
+plot(disp_disease, main = "disp_disease")
+```
+
+> *Taught in: W20-03 §4 — `adonis2()` PERMANOVA and `betadisper()` + `anova()`, with the dispersion plot. The two are reported together because PERMANOVA responds to centroid and/or dispersion differences.*
 
 **Interpretation.** Two things to read off:
 
