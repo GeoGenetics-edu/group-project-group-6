@@ -46,12 +46,12 @@ Load the original phyloseq objects and restrict to the Chinese cohort (`Project.
 
 ```{r load-filter}
 # Genus level
-load("project/data/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+load("project/data/D003924_Diabetes_Mellitus,_T/genus/D003924_phyloseq_updated_genus.RData")
 ps_genus_clean <- subset_samples(pylsq, Project.ID == "PRJNA422434")
 rm(pylsq)
 
 # Species level
-load("project/data/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
+load("project/data/D003924_Diabetes_Mellitus,_T/species/D003924_phyloseq_updated_species.RData")
 ps_species_clean <- subset_samples(pylsq, Project.ID == "PRJNA422434")
 rm(pylsq)
 

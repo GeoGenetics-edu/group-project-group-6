@@ -240,7 +240,6 @@ Use the Q-Q plots as a visual check of normality on raw relative abundances.
 Details: [5. Wilcoxon Rank-Sum Test][wiki-wilcoxon]. This chunk runs one Wilcoxon test per taxon, compares T2D with control and adds a BH-adjusted `q_value`.
 
 ```{r}
-
 # Få mesh.id
 table(sample_data(ps_china)$Disease.MESH.ID)
 
@@ -256,7 +255,7 @@ wilcox_results <- dat_rel %>%
   ) %>%
   mutate(q_value = p.adjust(p_value, method = "BH"))
 
-
+head(wilcox_results, 10)
 ```
 Positive `log2_fc` means T2D-enriched; negative means T2D-depleted. Interpret `q_value` using [8. Control False Discoveries with FDR][wiki-fdr].
 
@@ -287,7 +286,8 @@ The next table lists the strongest T2D-enriched taxa.
 ```{r}
 wilcox_T2D_enriched <- wilcox_results %>%
   select(taxon, Genus, Species, mean_T2D, mean_Control, log2_fc, p_value, q_value) %>%
-  arrange(-log2_fc) %>%
+  arrange(-log2_fc) %>% 
+  filter(q_value < 0.05) %>%
   head(10)
 
 wilcox_T2D_enriched
@@ -295,12 +295,15 @@ wilcox_T2D_enriched
 Inspect the top adult-enriched taxon in the raw data.
 
 ```{r}
+top_label <- wilcox_T2D_enriched %>% slice(1) %>% pull(Species)
+
 dat_rel %>%
   filter(taxon == wilcox_T2D_enriched %>% slice(1) %>% pull(taxon)) %>%
   ggplot(aes(x = Disease.MESH.ID, y = rel_abund, fill = Disease.MESH.ID)) +
     geom_boxplot(outlier.shape = NA) +
     geom_jitter(width = 0.15) +
-    theme_bw()
+    theme_bw() + 
+    labs(titel = paste("Top T2D-enriched (Wilcoxon):", top_label))
 ```
 Check whether the visual direction matches the positive `log2_fc`.
 
@@ -376,6 +379,9 @@ bind_rows(
 )
 ```
 Use the bar chart as a first-pass rank list, then compare it with the model-based analyses below.
+
+
+
 
 ## Sickness difference using log-transformed linear models
 
@@ -591,7 +597,7 @@ The plot is marginal over status, so use it as a visual check rather than a repl
 The next table lists adjusted adult-enriched taxa.
 
 ```{r}
-glm_adj_T2D_enriched <- glm_sex_adjusted_disease_results  %>%
+glm_adj_T2D_enriched <- glm_sex_adjusted_disease_results%>%
   select(taxon, Genus, Species, estimate,
          fold_change_T2D_vs_Control_adj_sex,
          std.error, statistic, p.value, q_value) %>%

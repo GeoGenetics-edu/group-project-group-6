@@ -40,7 +40,7 @@ library(knitr)
 # 2. Load the unfiltered dataset
 
 ```{r load-raw}
-load("project/data/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+load("project/data/D003924_Diabetes_Mellitus,_T/genus/D003924_phyloseq_updated_genus.RData")
 ps_raw <- pylsq
 rm(pylsq)
 

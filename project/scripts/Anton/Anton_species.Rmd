@@ -18,7 +18,7 @@ library(vegan)
 
 ## loading dataset on genus level
 ```{r}
-load("project/data/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
+load("project/data/D003924_Diabetes_Mellitus,_T/species/D003924_phyloseq_updated_species.RData")
 ps_species <- pylsq
 rm(pylsq)
 ```

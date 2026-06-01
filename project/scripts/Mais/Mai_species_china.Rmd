@@ -132,8 +132,19 @@ wilcox_D006262_enriched
 
 # Finder de 10 taxa, der er mest berigede hos raske (D006262)
 # og samtidig er signifikante efter BH-korrektion (q < 0.05).
+#wilcox_D006262_enriched_significant <- wilcox_results %>%
+#  filter(q_value < 0.05) %>%
+#  arrange(log2_fc) %>%
+#  head(10)
+
+#wilcox_D006262_enriched_significant
+
+
 wilcox_D006262_enriched_significant <- wilcox_results %>%
-  filter(q_value < 0.05) %>%
+  filter(
+    q_value < 0.05,
+    log2_fc < 0
+  ) %>%
   arrange(log2_fc) %>%
   head(10)
 
@@ -152,11 +163,15 @@ wilcox_D003924_enriched
 # Finder de 10 taxa, der er mest berigede hos syge (D003924)
 # og samtidig er signifikante efter BH-korrektion (q < 0.05).
 wilcox_D003924_enriched_significant <- wilcox_results %>%
-  filter(q_value < 0.05) %>%
+  filter(
+    q_value < 0.05, 
+    log2_fc > 0
+    ) %>%
   arrange(desc(log2_fc)) %>%
   head(10)
 
 wilcox_D003924_enriched_significant
+
 ```
 
 
@@ -300,11 +315,15 @@ glm_D006262_enriched
 # Finder de 10 taxa, der er mest berigede hos raske (D006262)
 # blandt de taxa, der er signifikante efter BH-korrektion.
 glm_D006262_enriched_significant <- glm_disease_results %>%
-  filter(q_value < 0.05) %>%
-  arrange(fold_change) %>%
+  filter(
+    q_value < 0.05,
+    estimate > 0
+  ) %>%
+  arrange(desc(estimate)) %>%
   head(10)
 
 glm_D006262_enriched_significant
+
 ```
 
 
@@ -313,7 +332,7 @@ glm_D006262_enriched_significant
 glm_D003924_enriched <- glm_disease_results %>%
   select(taxon, Genus, Species, estimate, fold_change, std.error, statistic, p.value, q_value
   ) %>%
-  arrange(desc(fold_change)) %>%
+  arrange(fold_change) %>%
   head(10)
 
 glm_D003924_enriched
@@ -321,8 +340,11 @@ glm_D003924_enriched
 # Finder de 10 taxa, der er mest berigede hos syge (D003924)
 # blandt de taxa, der er signifikante efter BH-korrektion.
 glm_D003924_enriched_significant <- glm_disease_results %>%
-  filter(q_value < 0.05) %>%
-  arrange(desc(fold_change)) %>%
+  filter(
+    q_value < 0.05,
+    estimate < 0
+         ) %>%
+  arrange(desc(estimate)) %>%
   head(10)
 
 glm_D003924_enriched_significant
@@ -467,6 +489,15 @@ glm_adj_D006262_enriched <- glm_disease_age_adjusted %>%
   head(10)
 
 glm_adj_D006262_enriched
+
+#Her kan man lige sortere så man kun får de signifikante
+
+glm_adj_D006262_enriched_significant <- glm_disease_age_adjusted %>%
+  filter(q_value < 0.05) %>%
+  arrange(estimate) %>%
+  head(10)
+
+glm_adj_D006262_enriched_significant
 ```
 
 
@@ -484,7 +515,24 @@ glm_adj_D003924_enriched <- glm_disease_age_adjusted %>%
 
 glm_adj_D003924_enriched
 
+
+#Her kan man lige sortere så man kun får de signifikante
+
+glm_adj_D003924_enriched_significant <- glm_disease_age_adjusted %>%
+  filter(q_value < 0.05) %>%
+  arrange(desc(estimate)) %>%
+  head(10)
+
+glm_adj_D003924_enriched_significant
 ```
+Det bliver det samme taxa for både syge og raske fordi: 
+Der er kun én (eller meget få) signifikante taxa efter FDR-korrektion. Og jeg sorterer først efter at have filtreret til de signifikante taxa.
+Hvis der kun er én signifikant taxon: giver én række, og så er det ligegyldigt om du sorterer stigende eller faldende.
+
+Så jeg laver lige en der kun vælger estimates som er over eller under 0 alt efter om det skal være enriched i t2d eller raske:
+
+
+
 Estimate større end 0 er enriched hos de raske. Estimate under 0 er enriched hos de syge. 
 
 ```{r}
@@ -607,4 +655,1002 @@ bind_rows(
 
 ## Compositional analysis with CLR transformation
 
+Transform counts with CLR before fitting the adjusted model on a compositional scale.
 
+```{r}
+ps_clr <- transform_sample_counts(pylsq, function(x) {
+  x <- x + 1e-9
+  log(x) - mean(log(x)) #tilføjer pseudocounts til alle abundanser
+})
+otu_clr <- as(otu_table(ps_clr), "matrix") %>% t() %>% as.data.frame()
+meta_clr <- as(sample_data(ps_clr), "matrix") %>% as.data.frame()
+tax_clr <- as(tax_table(ps_clr), "matrix") %>% as.data.frame()
+```
+
+CLR-værdien fortæller:
+Hvor stor er taxonens abundans relativt til gennemsnittet af alle taxa i samme prøve?
+Så:
+positiv CLR = højere end gennemsnittet
+negativ CLR = lavere end gennemsnittet
+0 = præcis gennemsnittet
+
+
+The chunk below reshapes CLR values into the long table `dat_clr`.
+```{r}
+dat_clr <- otu_clr %>%
+  rownames_to_column("sample_id") %>%
+  pivot_longer(-sample_id, names_to = "taxon", values_to = "clr") %>%
+  left_join(meta_clr %>% as("data.frame") %>% rownames_to_column("sample_id"), by = "sample_id") %>%
+  left_join(tax_clr %>% rownames_to_column("taxon"), by = "taxon")
+```
+Fit one adjusted linear model per taxon using CLR values as the response.
+
+
+Tester sygdomseffekten med CLR:
+```{r}
+clr_disease_results <- dat_clr %>%
+  group_by(taxon, Genus, Species) %>%
+  group_modify(~ {
+    fit <- lm(
+      clr ~ Disease.MESH.ID,
+      data = .x
+    )
+
+    broom::tidy(fit)
+  }) %>%
+  ungroup() %>%
+  filter(grepl("Disease.MESH.ID", term)) %>%
+  mutate(
+    q_value = p.adjust(p.value, method = "BH")
+  )
+```
+Positive CLR estimates indicate healthy enrichment relative to the community geometric mean; negative estimates indicate T2D enrichment.
+positiv estimate → taxonet er relativt mere abundant hos raske
+negativ estimate → taxonet er relativt mere abundant hos T2D
+
+
+```{r}
+# De 10 taxa mest berigede hos T2D 
+clr_D003924_enriched <- clr_disease_results %>%
+  select(
+    taxon,
+    Genus,
+    Species,
+    estimate,
+    std.error,
+    statistic,
+    p.value,
+    q_value
+  ) %>%
+  arrange(estimate) %>%
+  head(10)
+
+clr_D003924_enriched
+
+clr_D003924_enriched_significant <- clr_disease_results %>%
+  filter(q_value < 0.05) %>%
+  arrange(estimate) %>%
+  head(10)
+
+clr_D003924_enriched_significant
+```
+
+```{r}
+# De 10 taxa mest berigede hos raske
+clr_D006262_enriched <- clr_disease_results %>%
+  select(
+    taxon,
+    Genus,
+    Species,
+    estimate,
+    std.error,
+    statistic,
+    p.value,
+    q_value
+  ) %>%
+  arrange(desc(estimate)) %>%
+  head(10)
+
+clr_D006262_enriched
+
+clr_D006262_enriched_significant <- clr_disease_results %>%
+  filter(q_value < 0.05) %>%
+  arrange(desc(estimate)) %>%
+  head(10)
+
+clr_D006262_enriched_significant
+```
+
+
+```{r}
+#Her sorteres de lige helt rigtigt så vi ikke bare har alle de signifikante men alle dem der har estimate over eller under 0 alt efter sygdomsstatus
+clr_D003924_enriched_significant <- clr_disease_results %>%
+  filter(
+    q_value < 0.05,
+    estimate < 0
+  ) %>%
+  arrange(estimate)
+clr_D003924_enriched_significant
+
+clr_D006262_enriched_significant <- clr_disease_results %>%
+  filter(
+    q_value < 0.05,
+    estimate > 0
+  ) %>%
+  arrange(desc(estimate))
+clr_D006262_enriched_significant
+```
+
+
+```{r}
+# Volcano plot: CLR-based linear model
+
+clr_disease_results %>%
+  mutate(
+    neg_log10_q = -log10(q_value),
+    direction = case_when(
+      q_value < 0.05 & estimate > 0 ~ "D006262-enriched",
+      q_value < 0.05 & estimate < 0 ~ "D003924-enriched",
+      TRUE ~ "Not significant"
+    )
+  ) %>%
+  ggplot(
+    aes(
+      x = estimate,
+      y = neg_log10_q,
+      color = direction
+    )
+  ) +
+  geom_point(alpha = 0.6, size = 2) +
+  scale_color_manual(
+    values = c(
+      "D003924-enriched" = "#E74C3C",
+      "D006262-enriched" = "#3498DB",
+      "Not significant" = "grey60"
+    )
+  ) +
+  geom_hline(
+    yintercept = -log10(0.05),
+    linetype = "dashed",
+    color = "grey40"
+  ) +
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed",
+    color = "grey40"
+  ) +
+  labs(
+    x = "CLR estimate (disease effect)",
+    y = "-log10(q-value)",
+    color = NULL,
+    title = "Compositional analysis (CLR): disease effect"
+  ) +
+  theme_bw()
+
+# Volcano plot for CLR-baseret lineær model
+# Positivt estimat = højere CLR hos raske (D006262)
+# Negativt estimat = højere CLR hos T2D (D003924)
+# Punkter over den vandrette linje har q < 0.05
+# Rød = T2D-enriched, blå = healthy-enriched
+```
+
+
+
+## Compare differential abundance methods
+
+The chunk below joins effect estimates and q-values from all methods.
+
+
+```{r}
+comparison_results <- wilcox_results %>%
+  select(
+    taxon,
+    Genus,
+    Species,
+    wilcox_log2fc = log2_fc,
+    wilcox_q = q_value
+  ) %>%
+  left_join(
+    glm_disease_results %>%
+      select(
+        taxon,
+        glm_estimate = estimate,
+        glm_q = q_value
+      ),
+    by = "taxon"
+  ) %>%
+  left_join(
+    glm_disease_age_adjusted %>%
+      select(
+        taxon,
+        glm_adj_estimate = estimate,
+        glm_adj_q = q_value
+      ),
+    by = "taxon"
+  ) %>%
+  left_join(
+    clr_disease_results %>%
+      select(
+        taxon,
+        clr_estimate = estimate,
+        clr_q = q_value
+      ),
+    by = "taxon"
+  )
+```
+First, count how many taxa each method detects at `q < 0.05`.
+
+```{r}
+# Significant taxa per method (q < 0.05)
+sig_summary <- tibble(
+  method = c("Wilcoxon", "GLM", "GLM adjusted", "CLR"),
+  n_significant = c(
+    sum(wilcox_results$q_value < 0.05, na.rm = TRUE),
+    sum(glm_disease_results$q_value < 0.05, na.rm = TRUE),
+    sum(glm_disease_age_adjusted$q_value < 0.05, na.rm = TRUE),
+    sum(clr_disease_results$q_value < 0.05, na.rm = TRUE)
+  )
+)
+
+sig_summary
+```
+Large differences in this count show that method choice affects the result set.
+
+Next, identify taxa significant in all four methods.
+
+
+```{r}
+# Taxa significant in all four methods
+
+all_methods_sig <- comparison_results %>%
+  filter(
+    wilcox_q < 0.05,
+    glm_q < 0.05,
+    glm_adj_q < 0.05,
+    clr_q < 0.05
+  ) %>%
+  select(
+    Genus,
+    Species,
+    wilcox_q,
+    glm_q,
+    glm_adj_q,
+    clr_q
+  ) %>%
+  arrange(wilcox_q)
+
+all_methods_sig
+```
+These taxa are the strongest consensus candidates. Use [13. How to Read the Practical Results][wiki-read-results] for the interpretation checklist.
+
+
+The next scatter plot tests whether age adjustment changes the sygdoms-effect estimates.
+```{r}
+comparison_results %>%
+  ggplot(
+    aes(
+      x = glm_estimate,
+      y = glm_adj_estimate
+    )
+  ) +
+  geom_point(alpha = 0.5) +
+  geom_abline(
+    slope = 1,
+    intercept = 0,
+    linetype = "dashed",
+    color = "red"
+  ) +
+  labs(
+    x = "Disease effect (unadjusted GLM)",
+    y = "Disease effect (age-adjusted GLM)",
+    title = "Impact of age adjustment on disease effect estimates"
+  ) +
+  theme_bw()
+```
+Hvis punkterne ligger tæt på den røde linje, betyder det:
+
+Aldersjustering ændrer næsten ikke resultaterne. Dog vil jeg sige at prikkerne ligger ret langt fra diagonalen. 
+
+Points far from the diagonal are taxa whose age effect changes after adjusting for status.
+
+The next scatter plot compares adjusted GLM and CLR effect sizes.
+
+```{r}
+# Effect size comparison: GLM vs CLR
+
+comparison_results %>%
+  ggplot(
+    aes(
+      x = glm_estimate,
+      y = clr_estimate
+    )
+  ) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(
+    method = "lm",
+    se = FALSE,
+    color = "blue"
+  ) +
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed"
+  ) +
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed"
+  ) +
+  labs(
+    x = "GLM estimate (log10 relative abundance)",
+    y = "CLR estimate",
+    title = "GLM vs compositional (CLR) effect sizes"
+  ) +
+  theme_bw()
+```
+Outliers are taxa where compositional correction most changes the inferred effect.
+
+Så hvis punkterne ligger langs den blå regressionslinje, betyder det: Taxa der er højere hos raske i GLM er også højere hos raske i CLR.
+Hvis punkterne ligger langt fra linjen, betyder det, at de to metoder ikke er enige om effektstørrelsen for de pågældende taxa.
+
+Hvis de to modeller er uenige skyldes det nok kompositionalitet. CLR tager højde for, at mikrobiomdata er kompositionelle.
+
+Nogle taxa ser derfor stærkt associerede ud i relative abundanser, men ikke efter CLR-transformation.
+
+
+
+The next plot counts how many methods support each taxon.
+```{r}
+# Q-value concordance across all methods
+comparison_results %>%
+  mutate(
+    sig_wilcox  = wilcox_q  < 0.05,
+    sig_glm     = glm_q     < 0.05,
+    sig_glm_adj = glm_adj_q < 0.05,
+    sig_clr     = clr_q     < 0.05,
+    n_methods_significant = sig_wilcox + sig_glm + sig_glm_adj + sig_clr
+  ) %>%
+  count(n_methods_significant) %>%
+  filter(!is.na(n_methods_significant)) %>% 
+  ggplot(aes(x = factor(n_methods_significant), y = n)) +
+    geom_col(fill = "steelblue") +
+    labs(
+      x = "Number of methods detecting significance (q < 0.05)",
+      y = "Number of taxa",
+      title = "Concordance of significance across methods"
+    ) +
+    theme_bw()
+```
+
+Use this distribution to separate broad agreement from method-specific detections.
+
+
+The heatmap below shows q-value strength and direction for taxa significant in at least one method.
+```{r}
+# Significance heatmap with directionality
+
+heatmap_data <- comparison_results %>%
+  filter(
+    wilcox_q < 0.05 |
+    glm_q < 0.05 |
+    glm_adj_q < 0.05 |
+    clr_q < 0.05
+  ) %>%
+  mutate(label = Species) %>%
+  select(
+    label,
+    wilcox_q,
+    glm_q,
+    glm_adj_q,
+    clr_q,
+    wilcox_log2fc,
+    glm_estimate,
+    glm_adj_estimate,
+    clr_estimate
+  ) %>%
+  pivot_longer(
+    cols = c(wilcox_q, glm_q, glm_adj_q, clr_q),
+    names_to = "method",
+    values_to = "q_value"
+  ) %>%
+  mutate(
+    direction = case_when(
+      method == "wilcox_q"  ~ wilcox_log2fc,
+      method == "glm_q"     ~ -glm_estimate,
+      method == "glm_adj_q" ~ -glm_adj_estimate,
+      method == "clr_q"     ~ -clr_estimate
+    ),
+
+    signed_neg_log10_q =
+      sign(direction) *
+      pmin(-log10(q_value), 10),
+
+    method = factor(
+      method,
+      levels = c(
+        "wilcox_q",
+        "glm_q",
+        "glm_adj_q",
+        "clr_q"
+      ),
+      labels = c(
+        "Wilcoxon",
+        "GLM",
+        "GLM adjusted",
+        "CLR"
+      )
+    )
+  )
+taxon_order <- heatmap_data %>%
+  group_by(label) %>%
+  summarise(
+    mean_signed = mean(signed_neg_log10_q, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(mean_signed) %>%
+  pull(label)
+
+heatmap_data %>%
+  mutate(label = factor(label, levels = taxon_order)) %>%
+  ggplot(
+    aes(
+      x = method,
+      y = label,
+      fill = signed_neg_log10_q
+    )
+  ) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(
+    aes(label = ifelse(q_value < 0.05, "*", "")),
+    color = "black",
+    size = 3
+  ) +
+  scale_fill_gradient2(
+    low = "#3498DB",
+    mid = "white",
+    high = "#C0392B",
+    midpoint = 0,
+    limits = c(-10, 10),
+    name = "Signed\n-log10(q)",
+    breaks = c(-10, -5, 0, 5, 10),
+    labels = c(
+      "-10\n(healthy)",
+      "-5",
+      "0",
+      "5",
+      "10\n(T2D)"
+    )
+  ) +
+  labs(
+    x = "Method",
+    y = "Taxon",
+    title = "Significance and directionality across methods",
+    subtitle = "Blue = healthy-enriched, Red = T2D-enriched"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.y = element_text(size = 7)
+  )
+```
+
+Rows with consistent colour and stars across methods are the most stable findings.
+
+The final method-comparison plot checks whether Wilcoxon and CLR agree on direction.
+
+```{r}
+# Cross-method effect size agreement: Wilcoxon log2FC vs CLR estimate
+comparison_results %>%
+  mutate(
+    sig_category = case_when(
+      wilcox_q < 0.05 & clr_q < 0.05 ~ "Both significant",
+      wilcox_q < 0.05               ~ "Wilcoxon only",
+      clr_q < 0.05                  ~ "CLR only",
+      TRUE                          ~ "Not significant"
+    )
+  ) %>%
+  ggplot(aes(x = wilcox_log2fc, y = clr_estimate, color = sig_category)) +
+    geom_point(alpha = 0.6, size = 2) +
+    scale_color_manual(values = c(
+      "Both significant" = "#E74C3C",
+      "Wilcoxon only"    = "#E67E22",
+      "CLR only"         = "#3498DB",
+      "Not significant"  = "grey70"
+    )) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+    labs(x = "Wilcoxon log2 fold change (adult vs infant)",
+         y = "CLR estimate (adult vs infant)",
+         color = NULL,
+         title = "Effect size agreement: Wilcoxon vs CLR") +
+    theme_bw()
+```
+Same-sign points indicate agreement between the simplest and most compositionally aware univariate methods.
+
+
+#Multivariate statistics
+
+These sections analyse all taxa jointly on the CLR scale. PCA is unconstrained; RDA is constrained by metadata.
+The second statistical block stops treating taxa as isolated response variables. Instead, each sample is represented by its whole gut community profile: one row per sample and one column per taxon.
+
+PCA spørger: What are the strongest overall community gradients? og bruger ikke metadata til at bygge akser
+
+RDA spørger: How much community structure is explained by selected predictors? og bruger metadata til at bygge akser
+
+## PCA of CLR-transformed profiles
+Build a CLR matrix and inspect the largest unconstrained community gradients.
+
+```{r}
+# CLR-matrix til PCA
+clr_mat <- dat_clr %>%
+  select(sample_id, taxon, clr) %>%
+  pivot_wider(
+    names_from = taxon,
+    values_from = clr
+  ) %>%
+  column_to_rownames("sample_id") %>%
+  as.matrix()
+
+# Metadata i samme rækkefølge som matrixen
+clr_meta <- meta_clr[rownames(clr_mat), ] %>%
+  as.data.frame()
+
+# PCA
+clr_pca <- prcomp(
+  clr_mat,
+  center = TRUE,
+  scale. = FALSE
+)
+
+# PCA scores
+pca_scores <- as.data.frame(clr_pca$x[, 1:2]) %>%
+  rownames_to_column("sample_id") %>%
+  left_join(
+    clr_meta %>%
+      rownames_to_column("sample_id"),
+    by = "sample_id"
+  )
+
+# Varians forklaret
+pca_var <- round(
+  100 * clr_pca$sdev^2 /
+    sum(clr_pca$sdev^2),
+  1
+)
+
+# PCA plot
+pca_scores %>%
+  ggplot(
+    aes(
+      x = PC1,
+      y = PC2,
+      color = Disease.MESH.ID
+    )
+  ) +
+  geom_point(
+    size = 3,
+    alpha = 0.85
+  ) +
+  scale_color_manual(
+    values = c(
+      "D003924" = "#E74C3C",
+      "D006262" = "#3498DB"
+    )
+  ) +
+  labs(
+    x = paste0("PC1 (", pca_var[1], "%)"),
+    y = paste0("PC2 (", pca_var[2], "%)"),
+    color = "Disease status",
+    title = "PCA of CLR-transformed microbiome profiles"
+  ) +
+  theme_bw()
+```
+
+Use PCA to see whether age or health status align with the strongest overall community gradients. it does not really
+
+## Constrained ordination with RDA
+
+Details: [12. Constrained Ordination with RDA][wiki-rda]. Fit an RDA on the CLR matrix constrained by age and gender.
+
+DETTE PLOT KUNNE JO OGSÅ VÆRE FEDT AT LAVE HVOR DE ANDRE PROJEKTER OGSÅ VAR MED
+```{r}
+rda_disease_age <- rda(
+  clr_mat ~ Disease.MESH.ID + Host.age,
+  data = clr_meta
+)
+```
+
+Use permutation ANOVA to test the constrained model and each predictor.
+```{r}
+anova(rda_disease_age, permutations = 999)
+anova(rda_disease_age, by = "term", permutations = 999)
+```
+
+A significant sygdoms term supports a community-level sygdoms effect after accounting for age
+
+Extract RDA1 taxon scores to rank the taxa driving the primary constrained axis.
+```{r}
+rda_site_scores_raw <- scores(
+  rda_disease_age,
+  display = "sites"
+)
+
+rda1_sign <- ifelse(
+  mean(
+    rda_site_scores_raw[
+      clr_meta$Disease.MESH.ID == "D006262",
+      "RDA1"
+    ],
+    na.rm = TRUE
+  ) >=
+  mean(
+    rda_site_scores_raw[
+      clr_meta$Disease.MESH.ID == "D003924",
+      "RDA1"
+    ],
+    na.rm = TRUE
+  ),
+  1,
+  -1
+)
+
+taxon_scores <- scores(
+  rda_disease_age,
+  display = "species"
+)[,1] * rda1_sign
+
+rda_taxa <- tibble(
+  taxon = names(taxon_scores),
+  rda1_loading = taxon_scores
+) %>%
+  arrange(desc(abs(rda1_loading)))
+```
+
+positiv rda1_loading → associeret med D006262 (raske)
+negativ rda1_loading → associeret med D003924 (T2D)
+
+The `rda_taxa` table ranks taxa by absolute loading magnitude.
+
+The biplot below shows samples, predictors and the top RDA1 taxa in the same constrained ordination space.
+```{r}
+
+class(clr_meta$Host.age)
+clr_meta$Host.age <- as.numeric(as.character(clr_meta$Host.age))
+rda_disease_age <- rda(
+  clr_mat ~ Disease.MESH.ID + Host.age,
+  data = clr_meta
+)
+
+
+# Varians forklaret af RDA-akserne
+eig <- rda_disease_age$CCA$eig
+
+pct1 <- round(
+  eig[1] / rda_disease_age$tot.chi * 100,
+  1
+)
+
+pct2 <- round(
+  eig[2] / rda_disease_age$tot.chi * 100,
+  1
+)
+
+# Sample scores
+site_scores <- scores(
+  rda_disease_age,
+  display = "sites"
+) %>%
+  as.data.frame() %>%
+  mutate(
+    RDA1 = RDA1 * rda1_sign
+  ) %>%
+  rownames_to_column("sample_id") %>%
+  left_join(
+    clr_meta %>%
+      rownames_to_column("sample_id"),
+    by = "sample_id"
+  )
+
+# Constraining variable arrows
+biplot_scores <- scores(
+  rda_disease_age,
+  display = "bp"
+) %>%
+  as.data.frame() %>%
+  mutate(
+    RDA1 = RDA1 * rda1_sign
+  ) %>%
+  rownames_to_column("variable")
+
+# Top taxa loadings
+top_species_scores <- scores(
+  rda_disease_age,
+  display = "species"
+) %>%
+  as.data.frame() %>%
+  mutate(
+    RDA1 = RDA1 * rda1_sign
+  ) %>%
+  rownames_to_column("taxon") %>%
+  inner_join(
+    rda_taxa %>% head(5),
+    by = "taxon"
+  ) %>%
+  left_join(
+    tax_clr %>%
+      rownames_to_column("taxon"),
+    by = "taxon"
+  ) %>%
+  mutate(
+    label = Species
+  )
+
+# Skaler pile
+site_range <- max(
+  abs(
+    c(
+      site_scores$RDA1,
+      site_scores$RDA2
+    )
+  )
+)
+
+arrow_scale <- site_range * 0.8 /
+  max(
+    sqrt(
+      biplot_scores$RDA1^2 +
+      biplot_scores$RDA2^2
+    )
+  )
+
+species_scale <- site_range * 0.6 /
+  max(
+    sqrt(
+      top_species_scores$RDA1^2 +
+      top_species_scores$RDA2^2
+    )
+  )
+
+biplot_scores <- biplot_scores %>%
+  mutate(
+    RDA1 = RDA1 * arrow_scale,
+    RDA2 = RDA2 * arrow_scale
+  )
+
+top_species_scores <- top_species_scores %>%
+  mutate(
+    RDA1 = RDA1 * species_scale,
+    RDA2 = RDA2 * species_scale
+  )
+
+# RDA biplot
+ggplot() +
+
+  geom_point(
+    data = site_scores,
+    aes(
+      x = RDA1,
+      y = RDA2,
+      color = Disease.MESH.ID
+    ),
+    size = 3,
+    alpha = 0.85
+  ) +
+
+  geom_segment(
+    data = top_species_scores,
+    aes(
+      x = 0,
+      y = 0,
+      xend = RDA1,
+      yend = RDA2
+    ),
+    arrow = arrow(length = unit(0.15, "cm")),
+    color = "grey70",
+    linewidth = 0.5
+  ) +
+
+  geom_text(
+    data = top_species_scores,
+    aes(
+      x = RDA1 * 1.15,
+      y = RDA2 * 1.15,
+      label = label
+    ),
+    size = 2.5,
+    color = "grey50"
+  ) +
+
+  geom_segment(
+    data = biplot_scores,
+    aes(
+      x = 0,
+      y = 0,
+      xend = RDA1,
+      yend = RDA2
+    ),
+    arrow = arrow(length = unit(0.25, "cm")),
+    color = "black",
+    linewidth = 1
+  ) +
+
+  geom_text(
+    data = biplot_scores,
+    aes(
+      x = RDA1 * 1.15,
+      y = RDA2 * 1.15,
+      label = variable
+    ),
+    size = 3.5,
+    fontface = "bold",
+    color = "black"
+  ) +
+
+  scale_color_manual(
+    values = c(
+      "D003924" = "#E74C3C",
+      "D006262" = "#3498DB"
+    )
+  ) +
+
+  labs(
+    x = paste0(
+      "RDA1 (",
+      pct1,
+      "% of total variance)"
+    ),
+    y = paste0(
+      "RDA2 (",
+      pct2,
+      "% of total variance)"
+    ),
+    color = "Disease status",
+    title = "RDA biplot: microbiome constrained by disease status and age"
+  ) +
+
+  theme_bw()
+
+
+```
+lorteplot
+
+The final plot ranks the strongest RDA1 taxon loadings directly.
+
+```{r}
+rda_taxa %>%
+  head(20) %>%
+  left_join(
+    tax_clr %>% rownames_to_column("taxon"),
+    by = "taxon"
+  ) %>%
+  mutate(
+    label = Species,
+    direction = ifelse(
+      rda1_loading > 0,
+      "D006262-associated",
+      "D003924-associated"
+    )
+  ) %>%
+  ggplot(
+    aes(
+      x = reorder(label, rda1_loading),
+      y = rda1_loading,
+      fill = direction
+    )
+  ) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_manual(
+    values = c(
+      "D003924-associated" = "#E74C3C",
+      "D006262-associated" = "#3498DB"
+    )
+  ) +
+  labs(
+    x = NULL,
+    y = "RDA1 loading",
+    fill = NULL,
+    title = "Top 20 taxa by RDA1 loading magnitude"
+  ) +
+  theme_bw()
+```
+
+
+The final comparison links the multivariate RDA loadings to the CLR-based univariate age estimates.
+
+```{r}
+rda_clr_comparison <- rda_taxa %>%
+  left_join(
+    clr_disease_results %>%
+      select(
+        taxon,
+        Genus,
+        Species,
+        clr_estimate = estimate,
+        clr_q = q_value
+      ),
+    by = "taxon"
+  ) %>%
+  mutate(
+    direction_agreement =
+      sign(rda1_loading) == sign(clr_estimate),
+
+    clr_result = case_when(
+      clr_q < 0.05 & direction_agreement ~
+        "CLR significant, same direction",
+
+      clr_q < 0.05 ~
+        "CLR significant, opposite direction",
+
+      TRUE ~
+        "CLR not significant"
+    )
+  )
+
+rda_clr_comparison %>%
+  ggplot(
+    aes(
+      x = clr_estimate,
+      y = rda1_loading,
+      color = clr_result
+    )
+  ) +
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed",
+    color = "grey40"
+  ) +
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed",
+    color = "grey40"
+  ) +
+  geom_point(
+    alpha = 0.65,
+    size = 2
+  ) +
+  scale_color_manual(
+    values = c(
+      "CLR significant, same direction" = "#2E8B57",
+      "CLR significant, opposite direction" = "#E67E22",
+      "CLR not significant" = "grey70"
+    )
+  ) +
+  labs(
+    x = "CLR disease estimate",
+    y = "RDA1 loading",
+    color = NULL,
+    title = "RDA loadings vs CLR disease effects"
+  ) +
+  theme_bw()
+```
+Points in the upper-right and lower-left quadrants agree in direction between RDA and CLR.
+
+Øverste højre hjørne:
+positiv CLR-estimate
+positiv RDA-loading
+begge metoder siger: associeret med raske (D006262)
+
+Nederste venstre hjørne:
+negativ CLR-estimate
+negativ RDA-loading
+begge metoder siger: associeret med T2D (D003924)
+
+Øverste venstre eller nederste højre hjørne:
+metoderne er uenige om retningen.
+
+Hvis de fleste punkter ligger langs diagonalen fra nederst venstre til øverst højre, så fortæller det, at din multivariate RDA og dine univariate CLR-modeller peger på de samme taxa. Det er faktisk en ret stærk validering af resultaterne.
+
+
+```{r}
+rda_clr_comparison %>%
+  arrange(desc(abs(rda1_loading))) %>%
+  select(
+    Genus,
+    Species,
+    rda1_loading,
+    clr_estimate,
+    clr_q,
+    direction_agreement
+  ) %>%
+  head(20)
+```
+Den viser de 20 taxa med de største absolutte RDA-loadings: Altså de taxa som bidrager mest til separationen langs RDA1.
+hvis roseburia er 0.72 betyder det at den er stærkt associeret med den positive side af RDA1, hvis positiv rda1 svarer til raske, så er roseburia associeret med raske

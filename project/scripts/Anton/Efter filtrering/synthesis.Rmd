@@ -42,11 +42,11 @@ library(broom)
 # 2. Load both levels (Chinese cohort)
 
 ```{r load-data}
-load("project/data/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+load("project/data/D003924_Diabetes_Mellitus,_T/genus/D003924_phyloseq_updated_genus.RData")
 ps_genus <- subset_samples(pylsq, Project.ID == "PRJNA422434")
 rm(pylsq)
 
-load("project/data/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
+load("project/data/D003924_Diabetes_Mellitus,_T/species/D003924_phyloseq_updated_species.RData")
 ps_species <- subset_samples(pylsq, Project.ID == "PRJNA422434")
 rm(pylsq)
 
@@ -64,7 +64,7 @@ We **keep the lineage exactly as stored in the phyloseq objects** and simply doc
 tt_g <- as.data.frame(as(tax_table(ps_genus), "matrix"))
 
 # 841 = the taxon we report as "Roseburia sp." (genus-resolved, species unknown)
-taxonomy_demo <- t(tt_g["841", c("Phylum", "Class", "Order", "Family", "Genus", "Species")])
+taxonomy_demo <- t(tt_g["841", c("Domain","Phylum", "Class", "Order", "Family", "Genus", "Species")])
 colnames(taxonomy_demo) <- "Taxon 841"
 taxonomy_demo
 ```
