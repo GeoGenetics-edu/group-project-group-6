@@ -84,7 +84,6 @@ ps_genus <- tax_glom(ps_rel, taxrank = "Genus")
 
 # Hjælp fra Chat til at samle data fra sample
 # Top 10 genera
-
 # For genus 
 top10 <- names(sort(
   taxa_sums(ps_genus),
@@ -115,22 +114,18 @@ plot_bar(
 
 
 # For specie
-
 ps_top_s <- prune_taxa(
   top10,
   ps_rel
 )
-
 ps_disease_s <- merge_samples(
   ps_top_s,
   group = "Disease.MESH.ID"
 )
-
 ps_disease_s <- transform_sample_counts(
   ps_disease_s,
   function(x) x / sum(x)
 )
-
 plot_bar(
   ps_disease_s,
   fill = "Species"
