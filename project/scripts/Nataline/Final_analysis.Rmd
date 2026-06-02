@@ -1,0 +1,1103 @@
+---
+title: "Final_analysis"
+output: html_document
+---
+```{r setup}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+
+```{r}
+library(phyloseq)
+library(vegan)
+library(dplyr)
+library(tibble)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(ggh4x)
+library(broom)
+library(microbiome)
+```
+
+
+## Load and filter species data
+
+```{r load-data}
+load("project/data/D003924_Diabetes_Mellitus,_T/species/D003924_phyloseq_updated_species.RData")
+ps <- subset_samples(pylsq, Project.ID == "PRJNA422434")
+rm(pylsq)
+
+ps
+table(sample_data(ps)$Disease.MESH.ID)
+ntaxa(ps)
+```
+
+
+
+
+MetaPhlAn kunne ikke identificere organismen sikkert helt ned til species-niveau.
+Den ved Family = Lachnospiraceae med høj sikkerhed. Men den ved ikke præcis hvilken genus eller species. Denne bakterie ligger sandsynligvis et sted i Lachnospiraceae-familien, og den nærmeste reference vi fandt var Roseburia.
+Den siger s_Roseburia og ikke  intestinalis
+Roseburia hominis
+Roseburia faecis det viser at men højere til familien jensen men mangler et fornanvn species niveau 
+
+
+
+
+```{r}
+#longformat
+ps_rel  <- transform_sample_counts(ps, function(x) x / sum(x))
+otu_rel <- as(otu_table(ps_rel), "matrix") %>% t() %>% as.data.frame()
+meta_rel <- data.frame(sample_data(ps_rel))
+tax_rel  <- as(tax_table(ps_rel), "matrix") %>% as.data.frame()
+
+plot_bar(ps_rel, fill = "Species") +
+  geom_bar(aes(fill = Species), stat = "identity", colour = NA) +
+  facet_nested(~ Sex + Disease.MESH.ID, scales = "free_x") +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        legend.position = "none") +
+  labs(title = "Genus-level composition by Sex × Disease",
+       fill = "Genus")
+```
+
+```{r}
+#DaTA LONG FORMAT
+dat_rel <- otu_rel %>%
+  rownames_to_column("sample_id") %>%
+  pivot_longer(-sample_id, names_to = "taxon", values_to = "rel_abund") %>%
+  left_join(meta_rel %>% rownames_to_column("sample_id"), by = "sample_id") %>%
+  left_join(tax_rel  %>% rownames_to_column("taxon"),     by = "taxon")
+
+```
+
+
+
+
+
+```{r}
+one_taxon <- unique(dat_rel$taxon)[3]
+# one_taxon <- unique(dat_rel$taxon)[5]
+# one_taxon <- unique(dat_rel$taxon)[20]
+
+# Comparison between disease groups
+dat_rel %>%
+  filter(taxon == one_taxon) %>%
+  ggplot(aes(x = Disease.MESH.ID, y = rel_abund, fill = Disease.MESH.ID)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(width = 0.15, alpha = 0.4) +
+    theme_bw() +
+    labs(title = paste("Taxon", one_taxon, "by disease"))
+
+```
+```{r}
+# Comparison between sexes within T2D
+dat_rel %>%
+  filter(taxon == one_taxon, Disease.MESH.ID == "D003924") %>%
+  ggplot(aes(x = Sex, y = rel_abund, fill = Sex)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(width = 0.15, alpha = 0.4) +
+    theme_bw() +
+    labs(title = paste("Taxon", one_taxon, "by sex (T2D only)"))
+```
+```{r}
+# Zero inflation plot
+dat_rel %>%
+  group_by(taxon, Disease.MESH.ID) %>%
+  summarise(
+    prop_zero = mean(rel_abund == 0),
+    .groups = "drop"
+  ) %>%
+  ggplot(aes(x = prop_zero, fill = Disease.MESH.ID)) +
+  geom_histogram(
+    binwidth = 0.05,
+    colour = "white",
+    alpha = 0.7
+  ) +
+  scale_fill_manual(
+    values = c(
+      "D003924" = "#E69F00",
+      "D006262" = "#56B4E9"
+    )
+  ) +
+  facet_wrap(~Disease.MESH.ID) +
+  labs(
+    x = "Proportion of samples where relative abundance = 0",
+    y = "Number of taxa",
+    title = "Zero inflation by disease group"
+  ) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+```
+```{r}
+#Right-skewed distributions
+
+
+
+set.seed(42)
+
+example_taxa <- dat_rel %>%
+  filter(Disease.MESH.ID == "D003924") %>%
+  group_by(taxon, Genus, Species) %>%
+  summarise(
+    prop_nonzero = mean(rel_abund > 0),
+    .groups = "drop"
+  ) %>%
+  filter(
+    prop_nonzero > 0.4,
+    prop_nonzero < 0.9
+  ) %>%
+  slice_sample(n = 6) %>%
+  pull(taxon)
+
+
+dat_rel %>%
+  filter(
+    Disease.MESH.ID == "D003924",
+    taxon %in% example_taxa,
+    rel_abund > 0
+  ) %>%
+  mutate(label = Species) %>%
+  ggplot(aes(x = rel_abund)) +
+  geom_histogram(
+    bins = 20,
+    fill = "steelblue",
+    colour = "white"
+  ) +
+  facet_wrap(
+    ~label,
+    scales = "free"
+  ) +
+  labs(
+    x = "Relative abundance (non-zero values only)",
+    y = "Count",
+    title = "Right-skewed distributions in selected taxa (T2D)"
+  ) +
+  theme_bw()
+
+```
+```{r}
+dat_rel %>%
+  filter(
+    Disease.MESH.ID == "D003924",
+    taxon %in% example_taxa,
+    rel_abund > 0
+  ) %>%
+  mutate(label = Species) %>%
+  ggplot(aes(sample = rel_abund)) +
+  stat_qq() +
+  stat_qq_line(colour = "red") +
+  facet_wrap(
+    ~label,
+    scales = "free"
+  ) +
+  labs(
+    title = "Q-Q plots of selected taxa"
+  ) +
+  theme_bw()
+```
+```{r}
+wilcox_results <- dat_rel %>%
+  group_by(taxon, Genus, Species) %>%
+  summarise(
+    p_value = wilcox.test(rel_abund ~ Disease.MESH.ID, exact = FALSE)$p.value,
+    mean_T2D = mean(rel_abund[Disease.MESH.ID == "D003924"]),
+    mean_Healthy = mean(rel_abund[Disease.MESH.ID == "D006262"]),
+    log2_fc = log2((mean_T2D + 1e-6) / (mean_Healthy + 1e-6)),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    q_value = p.adjust(p_value, method = "BH"),
+    direction = ifelse(log2_fc > 0, "T2D-enriched", "Healthy-enriched")
+  )
+
+
+```
+
+
+```{r}
+# Step 1 — Run one Wilcoxon test per taxon
+wilcox_results <- dat_rel %>%
+  group_by(taxon, Genus, Species) %>%
+  summarise(
+    p_value      = wilcox.test(rel_abund ~ Disease.MESH.ID, exact = FALSE)$p.value,
+    mean_T2D     = mean(rel_abund[Disease.MESH.ID == "D003924"]),
+    mean_Healthy = mean(rel_abund[Disease.MESH.ID == "D006262"]),
+    log2_fc      = log2((mean_T2D + 1e-6) / (mean_Healthy + 1e-6)),
+    .groups = "drop"
+  ) %>%
+  mutate(q_value = p.adjust(p_value, method = "BH"))
+
+head(wilcox_results, 10)
+
+```
+```{r}
+top_taxon <- wilcox_T2D_depleted %>% slice(1) %>% pull(taxon)
+top_label <- wilcox_T2D_depleted %>% slice(1) %>% pull(Species)
+
+dat_rel %>%
+  filter(taxon == top_taxon) %>%
+  ggplot(aes(x = Disease.MESH.ID, y = rel_abund, fill = Disease.MESH.ID)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(width = 0.15, alpha = 0.4) +
+    scale_fill_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
+    theme_bw() +
+    labs(title = paste("Top T2D-depleted (Wilcoxon):", top_label))
+```
+
+
+```{r}
+### Top T2D-enriched (Wilcoxon)
+wilcox_T2D_enriched <- wilcox_results %>%
+  select(taxon, Genus, Species, mean_T2D, mean_Healthy, log2_fc, p_value, q_value) %>%
+  arrange(-log2_fc) %>%
+  head(10)
+
+wilcox_T2D_enriched
+
+
+
+
+```
+```{r}
+wilcox_Healthy_enriched <- wilcox_results %>%
+  select(taxon, Genus, Species, mean_T2D, mean_Healthy, log2_fc, p_value, q_value, direction) %>%
+  arrange(log2_fc) %>%
+  head(10)
+
+wilcox_Healthy_enriched
+```
+
+
+
+```{r}
+top_taxon <- wilcox_T2D_enriched %>% slice(1) %>% pull(taxon)
+top_label <- wilcox_T2D_enriched %>% slice(1) %>% pull(Species)
+
+
+top_taxon <- wilcox_T2D_enriched %>% slice(1) %>% pull(taxon)
+top_label <- wilcox_T2D_enriched %>% slice(1) %>% pull(Species)
+
+dat_rel %>%
+  filter(taxon == top_taxon) %>%
+  ggplot(aes(x = Disease.MESH.ID, y = rel_abund, fill = Disease.MESH.ID)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(width = 0.15, alpha = 0.4) +
+    scale_fill_manual(values = c("D003924" = "#E69F00", "D006262" = "#56B4E9")) +
+    theme_bw() +
+    labs(title = paste("Top T2D-enriched (Wilcoxon):", top_label))
+
+
+
+
+```
+
+### Volcano plot — Wilcoxon
+```{r}
+wilcox_results %>%
+  mutate(
+    neg_log10_q = -log10(q_value),
+    direction = case_when(
+      q_value < 0.05 & log2_fc > 0 ~ "T2D-enriched",
+      q_value < 0.05 & log2_fc < 0 ~ "T2D-depleted",
+      TRUE                         ~ "Not significant"
+    )
+  ) %>%
+  ggplot(aes(x = log2_fc, y = neg_log10_q, color = direction)) +
+    geom_point(alpha = 0.6, size = 2) +
+    scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
+                                  "T2D-depleted" = "#3498DB",
+                                  "Not significant" = "grey60")) +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+    labs(x = "log2 fold change (T2D vs Healthy)",
+         y = "-log10(q-value)", color = NULL,
+         title = "Wilcoxon: species-level disease effect") +
+    theme_bw()
+
+
+
+```
+```{r}
+
+### Top T2D-enriched (GLM unadjusted)
+glm_T2D_enriched <- glm_disease_results %>%
+  select(taxon, Genus, Species, estimate, fold_change_T2D_vs_Healthy,
+         std.error, statistic, p.value, q_value) %>%
+  arrange(-fold_change_T2D_vs_Healthy) %>%
+  head(10)
+
+glm_T2D_enriched
+
+
+```
+
+
+
+### Volcano plot — GLM unadjusted
+
+```{r glm-unadj-volcano, fig.width=8, fig.height=5}
+glm_disease_results %>%
+  mutate(
+    neg_log10_q = -log10(q_value),
+    direction = case_when(
+      q_value < 0.05 & estimate > 0 ~ "T2D-enriched",
+      q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
+      TRUE                          ~ "Not significant"
+    )
+  ) %>%
+  ggplot(aes(x = estimate, y = neg_log10_q, color = direction)) +
+    geom_point(alpha = 0.6, size = 2) +
+    scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
+                                  "T2D-depleted" = "#3498DB",
+                                  "Not significant" = "grey60")) +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+    labs(x = "GLM estimate (log10 RA, T2D vs Healthy)",
+         y = "-log10(q-value)", color = NULL,
+         title = "GLM unadjusted: species-level disease effect") +
+    theme_bw()
+
+```
+
+
+```{r}
+
+
+
+#Mest Healthy-enriched (størst negativ fold change)
+
+wilcox_Healthy_enriched <- wilcox_results %>%
+  select(taxon, Genus, Species,
+         mean_T2D, mean_Healthy,
+         log2_fc, p_value, q_value) %>%
+  arrange(log2_fc)
+
+head(wilcox_Healthy_enriched, 10)
+
+```
+
+## Primary adjusted model — Sex + Host.age (n = 359)
+
+```{r glm-adj-results}
+glm_disease_adjusted_sex_results <- dat_rel %>%
+  mutate(
+    Disease.MESH.ID = factor(Disease.MESH.ID, levels = c("D006262", "D003924")),
+    Sex             = factor(Sex,             levels = c("Female", "Male")),
+    Host.age        = as.numeric(Host.age)
+  ) %>%
+  group_by(taxon, Genus, Species) %>%
+  group_modify(~ {
+    fit <- glm(log10(rel_abund + 1e-6) ~ Disease.MESH.ID + Sex + Host.age,
+               data = .x, family = gaussian())
+    broom::tidy(fit)
+  }) %>%
+  ungroup() %>%
+  filter(term == "Disease.MESH.IDD003924") %>%
+  mutate(
+    q_value = p.adjust(p.value, method = "BH"),
+    fold_change_T2D_vs_Healthy_adj = 10^estimate
+  )
+
+```
+
+> *Taught in: W21 reference Rmd §7 "Adjust the linear model" (same GLM with covariates; teacher uses `status`, here `Sex` + `Host.age`). Covariate adjustment: Alberdi reading §5. Sex/Age are the only complete, polymorphic metadata variables in this cohort.*
+
+### Top T2D-depleted (GLM adj. Sex + Age)
+
+```{r glm-adj-depleted}
+glm_adj_T2D_depleted <- glm_disease_adjusted_sex_results %>%
+  select(taxon, Genus, Species, estimate, fold_change_T2D_vs_Healthy_adj,
+         std.error, statistic, p.value, q_value) %>%
+  arrange(fold_change_T2D_vs_Healthy_adj) %>%
+  head(10)
+
+glm_adj_T2D_depleted
+```
+
+```{r}
+# --------------------------------------------------
+# GLM unadjusted: T2D vs Healthy
+# --------------------------------------------------
+dat_rel <- dat_rel %>%
+  mutate(
+    Disease_group = factor(
+      Disease.MESH.ID,
+      levels = c("D006262", "D003924"),
+      labels = c("Healthy", "T2D")
+    )
+  )
+
+
+glm_disease_results <- dat_rel %>%
+  group_by(taxon, Genus, Species) %>%
+  group_modify(~ {
+    fit <- glm(
+      log10(rel_abund + 1e-6) ~ Disease_group,
+      data = .x
+    )
+    broom::tidy(fit)
+  }) %>%
+  ungroup() %>%
+  filter(term == "Disease_groupT2D") %>%
+  mutate(
+    q_value = p.adjust(p.value, method = "BH"),
+    fold_change_T2D_vs_Healthy = 10^estimate,
+    direction = case_when(
+      q_value < 0.05 & estimate > 0 ~ "T2D-enriched",
+      q_value < 0.05 & estimate < 0 ~ "Healthy-enriched",
+      TRUE ~ "Not significant"
+    )
+  )
+
+# --------------------------------------------------
+# Top Healthy-enriched taxa in GLM
+# --------------------------------------------------
+
+glm_Healthy_enriched <- glm_disease_results %>%
+  select(
+    taxon, Genus, Species,
+    estimate,
+    fold_change_T2D_vs_Healthy,
+    std.error, statistic, p.value, q_value,
+    direction
+  ) %>%
+  arrange(fold_change_T2D_vs_Healthy) %>%
+  head(10)
+
+glm_Healthy_enriched
+
+# Plot strongest Healthy-enriched GLM hit
+dat_rel %>%
+  filter(taxon == glm_Healthy_enriched %>% slice(1) %>% pull(taxon)) %>%
+  ggplot(aes(x = Disease_group, y = rel_abund, fill = Disease_group)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.4) +
+  scale_fill_manual(values = c(
+    "Healthy" = "#3498DB",
+    "T2D" = "#E74C3C"
+  )) +
+  labs(
+    x = "",
+    y = "Relative abundance",
+    title = paste("Top Healthy-enriched GLM hit:",
+                  glm_Healthy_enriched %>% slice(1) %>% pull(Species))
+  ) +
+  theme_bw()
+
+# --------------------------------------------------
+# Top T2D-enriched taxa in GLM
+# --------------------------------------------------
+
+glm_T2D_enriched <- glm_disease_results %>%
+  select(
+    taxon, Genus, Species,
+    estimate,
+    fold_change_T2D_vs_Healthy,
+    std.error, statistic, p.value, q_value,
+    direction
+  ) %>%
+  arrange(desc(fold_change_T2D_vs_Healthy)) %>%
+  head(10)
+
+glm_T2D_enriched
+
+# Plot strongest T2D-enriched GLM hit
+dat_rel %>%
+  filter(taxon == glm_T2D_enriched %>% slice(1) %>% pull(taxon)) %>%
+  ggplot(aes(x = Disease_group, y = rel_abund, fill = Disease_group)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.4) +
+  scale_fill_manual(values = c(
+    "Healthy" = "#3498DB",
+    "T2D" = "#E74C3C"
+  )) +
+  labs(
+    x = "",
+    y = "Relative abundance",
+    title = paste("Top T2D-enriched GLM hit:",
+                  glm_T2D_enriched %>% slice(1) %>% pull(Species))
+  ) +
+  theme_bw()
+
+# --------------------------------------------------
+# Volcano plot: GLM unadjusted
+# --------------------------------------------------
+
+glm_disease_results %>%
+  mutate(
+    neg_log10_q = -log10(q_value),
+    direction = case_when(
+      q_value < 0.05 & estimate > 0 ~ "T2D-enriched",
+      q_value < 0.05 & estimate < 0 ~ "Healthy-enriched",
+      TRUE ~ "Not significant"
+    )
+  ) %>%
+  ggplot(aes(x = estimate, y = neg_log10_q, color = direction)) +
+  geom_point(alpha = 0.6, size = 2) +
+  scale_color_manual(values = c(
+    "T2D-enriched" = "#E74C3C",
+    "Healthy-enriched" = "#3498DB",
+    "Not significant" = "grey60"
+  )) +
+  geom_hline(
+    yintercept = -log10(0.05),
+    linetype = "dashed",
+    color = "grey40"
+  ) +
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed",
+    color = "grey40"
+  ) +
+  labs(
+    x = "GLM estimate: log10 relative abundance (T2D vs Healthy)",
+    y = "-log10(q-value)",
+    color = NULL,
+    title = "GLM: T2D effect in gut microbiome"
+  ) +
+  theme_bw()
+
+# --------------------------------------------------
+# Bar chart of top significant taxa, GLM
+# --------------------------------------------------
+
+bind_rows(
+  glm_disease_results %>%
+    filter(q_value < 0.05) %>%
+    arrange(estimate) %>%
+    head(10),
+
+  glm_disease_results %>%
+    filter(q_value < 0.05) %>%
+    arrange(desc(estimate)) %>%
+    head(10)
+) %>%
+  distinct() %>%
+  mutate(
+    label = Species,
+    direction = ifelse(
+      estimate > 0,
+      "T2D-enriched",
+      "Healthy-enriched"
+    )
+  ) %>%
+  ggplot(aes(
+    x = reorder(label, -q_value),
+    y = estimate,
+    fill = direction
+  )) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_manual(values = c(
+    "T2D-enriched" = "#E74C3C",
+    "Healthy-enriched" = "#3498DB"
+  )) +
+  labs(
+    x = NULL,
+    y = "GLM estimate: log10 relative abundance",
+    fill = NULL,
+    title = "Top differentially abundant taxa (GLM)"
+  ) +
+  theme_bw()
+
+# --------------------------------------------------
+# Compare GLM and Wilcoxon results
+# --------------------------------------------------
+
+model_comparison <- wilcox_results %>%
+  select(
+    taxon, Genus, Species,
+    wilcox_log2_fc = log2_fc,
+    wilcox_q = q_value
+  ) %>%
+  left_join(
+    glm_disease_results %>%
+      select(
+        taxon,
+        glm_estimate = estimate,
+        glm_fold_change = fold_change_T2D_vs_Healthy,
+        glm_q = q_value
+      ),
+    by = "taxon"
+  ) %>%
+  mutate(
+    wilcox_direction = case_when(
+      wilcox_log2_fc > 0 ~ "T2D-enriched",
+      wilcox_log2_fc < 0 ~ "Healthy-enriched",
+      TRUE ~ "No direction"
+    ),
+    glm_direction = case_when(
+      glm_estimate > 0 ~ "T2D-enriched",
+      glm_estimate < 0 ~ "Healthy-enriched",
+      TRUE ~ "No direction"
+    ),
+    same_direction = wilcox_direction == glm_direction
+  )
+
+model_comparison %>%
+  arrange(glm_q) %>%
+  head(20)
+```
+```{r}
+
+# --------------------------------------------------
+# CLR transformation
+# --------------------------------------------------
+
+ps_clr <- transform_sample_counts(ps, function(x) {
+  x <- x + 1e-9
+  log(x) - mean(log(x))
+})
+
+otu_clr <- as(otu_table(ps_clr), "matrix") %>%
+  t() %>%
+  as.data.frame()
+
+meta_clr <- as(sample_data(ps_clr), "matrix") %>%
+  as.data.frame()
+
+tax_clr <- as(tax_table(ps_clr), "matrix") %>%
+  as.data.frame()
+
+dat_clr <- otu_clr %>%
+  rownames_to_column("sample_id") %>%
+  pivot_longer(
+    -sample_id,
+    names_to = "taxon",
+    values_to = "clr"
+  ) %>%
+  left_join(
+    meta_clr %>%
+      as("data.frame") %>%
+      rownames_to_column("sample_id"),
+    by = "sample_id"
+  ) %>%
+  left_join(
+    tax_clr %>%
+      rownames_to_column("taxon"),
+    by = "taxon"
+  ) %>%
+  mutate(
+    Disease_group = factor(
+      Disease.MESH.ID,
+      levels = c("D006262", "D003924"),
+      labels = c("Healthy", "T2D")
+    )
+  )
+
+
+```
+
+
+
+```{r}
+#CLR model uden justering
+clr_results <- dat_clr %>%
+  group_by(taxon, Genus, Species) %>%
+  group_modify(~ {
+    fit <- glm(clr ~ Disease_group, data = .x)
+    broom::tidy(fit)
+  }) %>%
+  ungroup() %>%
+  filter(term == "Disease_groupT2D") %>%
+  mutate(
+    q_value = p.adjust(p.value, method = "BH"),
+    direction = case_when(
+      q_value < 0.05 & estimate > 0 ~ "T2D-enriched",
+      q_value < 0.05 & estimate < 0 ~ "Healthy-enriched",
+      TRUE ~ "Not significant"
+    )
+  )
+
+clr_results %>%
+  arrange(q_value) %>%
+  head(20)
+```
+
+
+
+
+#Adjusted CLR model
+
+```{r}
+clr_adj_results <- dat_clr %>%
+  group_by(taxon, Genus, Species) %>%
+  group_modify(~ {
+    fit <- glm(
+      clr ~ Disease_group + Sex + BMI + Host.age,
+      data = .x
+    )
+    broom::tidy(fit)
+  }) %>%
+  ungroup() %>%
+  filter(term == "Disease_groupT2D") %>%
+  mutate(
+    q_value = p.adjust(p.value, method = "BH"),
+    direction = case_when(
+      q_value < 0.05 & estimate > 0 ~ "T2D-enriched",
+      q_value < 0.05 & estimate < 0 ~ "Healthy-enriched",
+      TRUE ~ "Not significant"
+    )
+  )
+
+clr_adj_results %>%
+  arrange(q_value) %>%
+  head(20)
+
+```
+
+```{r}
+
+#sex +dieases  clr
+clr_adj_results <- dat_clr %>%
+  group_by(taxon, Genus, Species) %>%
+  group_modify(~ {
+    fit <- glm(
+      clr ~ Disease_group + Sex,
+      data = .x
+    )
+    broom::tidy(fit)
+  }) %>%
+  ungroup() %>%
+  filter(term == "Disease_groupT2D") %>%
+  mutate(
+    q_value = p.adjust(p.value, method = "BH"),
+    direction = case_when(
+      q_value < 0.05 & estimate > 0 ~ "T2D-enriched",
+      q_value < 0.05 & estimate < 0 ~ "Healthy-enriched",
+      TRUE ~ "Not significant"
+    )
+  )
+
+clr_adj_results
+```
+
+
+PCA af CLR-data (T2D vs Healthy)
+
+```{r}
+# Community matrix
+gut_clr_mat <- dat_clr %>%
+  select(sample_id, taxon, clr) %>%
+  pivot_wider(names_from = taxon, values_from = clr) %>%
+  column_to_rownames("sample_id") %>%
+  as.matrix()
+
+gut_meta <- dat_clr %>%
+  distinct(sample_id, Disease_group, Sex, BMI) %>%
+  column_to_rownames("sample_id")
+
+# PCA
+gut_pca <- prcomp(gut_clr_mat,
+                  center = TRUE,
+                  scale. = FALSE)
+
+pca_scores <- as.data.frame(gut_pca$x[,1:2]) %>%
+  rownames_to_column("sample_id") %>%
+  left_join(
+    gut_meta %>%
+      rownames_to_column("sample_id"),
+    by = "sample_id"
+  )
+
+pca_var <- round(
+  100 * gut_pca$sdev^2 /
+    sum(gut_pca$sdev^2),
+  1
+)
+
+ggplot(
+  pca_scores,
+  aes(
+    PC1,
+    PC2,
+    color = Disease_group
+  )
+) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_color_manual(
+    values = c(
+      "Healthy" = "#3498DB",
+      "T2D" = "#E74C3C"
+    )
+  ) +
+  labs(
+    x = paste0("PC1 (", pca_var[1], "%)"),
+    y = paste0("PC2 (", pca_var[2], "%)"),
+    title = "PCA of CLR-transformed microbiome"
+  ) +
+  theme_bw()
+```
+RDA kan T2D foorklare vvariationen? 
+
+NOVA DISEASE 
+```{r}
+
+
+rda_disease <- rda(
+  gut_clr_mat ~ Disease_group,
+  data = gut_meta
+  
+)
+anova(
+  rda_disease,
+  permutations = 999
+)
+
+```
+
+Pr(>F) = 0.01
+
+så: T2D forklarer signifikant variation i mikrobiomet.
+
+
+4. Test sygdomseffekten alene
+```{r}
+anova(
+  rda_disease,
+  by = "term",
+  permutations = 999
+)
+
+```
+Justeret model
+
+```{r}
+taxon_scores <- scores(
+  rda_disease,
+  display = "species"
+)[,1]
+
+rda_taxa <- tibble(
+  taxon = names(taxon_scores),
+  rda1_loading = taxon_scores
+) %>%
+  arrange(desc(abs(rda1_loading)))
+```
+
+
+```{r}
+taxon_scores <- scores(
+  rda_disease,
+  display = "species"
+)[,1]
+
+rda_taxa <- tibble(
+  taxon = names(taxon_scores),
+  rda1_loading = taxon_scores
+) %>%
+  arrange(desc(abs(rda1_loading)))
+```
+
+
+```{r}
+rda_taxa %>%
+  head(20) %>%
+  left_join(
+    tax_clr %>%
+      rownames_to_column("taxon"),
+    by = "taxon"
+  ) %>%
+  mutate(
+    direction =
+      ifelse(
+        rda1_loading > 0,
+        "T2D-associated",
+        "Healthy-associated"
+      )
+  ) %>%
+  ggplot(
+    aes(
+      reorder(Species, rda1_loading),
+      rda1_loading,
+      fill = direction
+    )
+  ) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_manual(
+    values = c(
+      "T2D-associated" = "#E74C3C",
+      "Healthy-associated" = "#3498DB"
+    )
+  ) +
+  theme_bw() +
+  labs(
+    x = NULL,
+    y = "RDA1 loading",
+    title = "Taxa driving T2D vs Healthy separation"
+  )
+```
+```{r}
+# --------------------------------------------------
+# RDA biplot: T2D vs Healthy
+# --------------------------------------------------
+
+rda_disease <- rda(
+  gut_clr_mat ~ Disease_group + Sex,
+  data = gut_meta
+)
+
+anova(rda_disease, permutations = 999)
+anova(rda_disease, by = "term", permutations = 999)
+
+# Percent variance explained by RDA axes
+eig <- rda_disease$CCA$eig
+pct1 <- round(eig[1] / rda_disease$tot.chi * 100, 1)
+pct2 <- round(eig[2] / rda_disease$tot.chi * 100, 1)
+
+# Orient RDA1 so positive side points toward T2D
+rda_site_scores_raw <- scores(rda_disease, display = "sites")
+
+rda1_sign <- ifelse(
+  mean(rda_site_scores_raw[gut_meta$Disease_group == "T2D", "RDA1"], na.rm = TRUE) >=
+    mean(rda_site_scores_raw[gut_meta$Disease_group == "Healthy", "RDA1"], na.rm = TRUE),
+  1,
+  -1
+)
+
+# Site scores = sample positions
+site_scores <- scores(rda_disease, display = "sites") %>%
+  as.data.frame() %>%
+  mutate(RDA1 = RDA1 * rda1_sign) %>%
+  rownames_to_column("sample_id") %>%
+  left_join(
+    gut_meta %>% rownames_to_column("sample_id"),
+    by = "sample_id"
+  )
+
+# Biplot scores = arrows for explanatory variables
+biplot_scores <- scores(rda_disease, display = "bp") %>%
+  as.data.frame() %>%
+  mutate(RDA1 = RDA1 * rda1_sign) %>%
+  rownames_to_column("variable")
+
+# Taxon scores
+taxon_scores <- scores(rda_disease, display = "species")[, 1] * rda1_sign
+
+rda_taxa <- tibble(
+  taxon = names(taxon_scores),
+  rda1_loading = taxon_scores
+) %>%
+  arrange(desc(abs(rda1_loading)))
+
+top_species_scores <- scores(rda_disease, display = "species") %>%
+  as.data.frame() %>%
+  mutate(RDA1 = RDA1 * rda1_sign) %>%
+  rownames_to_column("taxon") %>%
+  inner_join(rda_taxa %>% head(10), by = "taxon") %>%
+  left_join(
+    tax_clr %>% rownames_to_column("taxon"),
+    by = "taxon"
+  ) %>%
+  mutate(label = Species)
+
+# Scale arrows for visualisation
+site_range <- max(abs(c(site_scores$RDA1, site_scores$RDA2)))
+
+arrow_scale <- site_range * 0.8 /
+  max(sqrt(biplot_scores$RDA1^2 + biplot_scores$RDA2^2))
+
+species_scale <- site_range * 0.6 /
+  max(sqrt(top_species_scores$RDA1^2 + top_species_scores$RDA2^2))
+
+biplot_scores <- biplot_scores %>%
+  mutate(
+    RDA1 = RDA1 * arrow_scale,
+    RDA2 = RDA2 * arrow_scale
+  )
+
+top_species_scores <- top_species_scores %>%
+  mutate(
+    RDA1 = RDA1 * species_scale,
+    RDA2 = RDA2 * species_scale
+  )
+
+# Plot RDA biplot
+ggplot() +
+  geom_point(
+    data = site_scores,
+    aes(x = RDA1, y = RDA2, color = Disease_group, shape = Sex),
+    size = 3,
+    alpha = 0.85
+  ) +
+  geom_segment(
+    data = top_species_scores,
+    aes(x = 0, y = 0, xend = RDA1, yend = RDA2),
+    arrow = arrow(length = unit(0.15, "cm")),
+    color = "grey70",
+    linewidth = 0.5
+  ) +
+  geom_text(
+    data = top_species_scores,
+    aes(x = RDA1 * 1.15, y = RDA2 * 1.15, label = label),
+    size = 2.5,
+    color = "grey50"
+  ) +
+  geom_segment(
+    data = biplot_scores,
+    aes(x = 0, y = 0, xend = RDA1, yend = RDA2),
+    arrow = arrow(length = unit(0.25, "cm")),
+    color = "black",
+    linewidth = 1
+  ) +
+  geom_text(
+    data = biplot_scores,
+    aes(x = RDA1 * 1.15, y = RDA2 * 1.15, label = variable),
+    size = 3.5,
+    fontface = "bold",
+    color = "black"
+  ) +
+  scale_color_manual(values = c(
+    "Healthy" = "#3498DB",
+    "T2D" = "#E74C3C"
+  )) +
+  labs(
+    x = paste0("RDA1 (", pct1, "% of total variance)"),
+    y = paste0("RDA2 (", pct2, "% of total variance)"),
+    color = "Disease group",
+    shape = "Sex",
+    title = "RDA biplot: CLR microbiome constrained by T2D status and sex"
+  ) +
+  theme_bw()
+```
+
+```{r}
+rda_taxa %>%
+  head(20) %>%
+  left_join(
+    tax_clr %>% rownames_to_column("taxon"),
+    by = "taxon"
+  ) %>%
+  mutate(
+    label = Species,
+    direction = ifelse(
+      rda1_loading > 0,
+      "T2D-associated",
+      "Healthy-associated"
+    )
+  ) %>%
+  ggplot(aes(
+    x = reorder(label, rda1_loading),
+    y = rda1_loading,
+    fill = direction
+  )) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_manual(values = c(
+    "T2D-associated" = "#E74C3C",
+    "Healthy-associated" = "#3498DB"
+  )) +
+  labs(
+    x = NULL,
+    y = "RDA1 loading",
+    fill = NULL,
+    title = "Top 20 taxa driving T2D-associated RDA axis"
+  ) +
+  theme_bw()
+```
+

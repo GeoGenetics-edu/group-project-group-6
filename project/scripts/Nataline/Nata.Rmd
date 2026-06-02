@@ -69,9 +69,6 @@ table(sample_data(pylsq)$Disease.MESH.ID)
 
 ```
 ```{r}
-
-
-
 plot_richness(
   pylsq,
   x = "Disease.MESH.ID",
@@ -96,6 +93,8 @@ plot_richness(
   x = "Country",
   measures = "Shannon"
 )
+
+
 ```
 ```{r}
 table(sample_data(pylsq)$Country,
@@ -153,6 +152,18 @@ plot_richness(
   x = "Recent.antibiotics.use",
   measures = c("Shannon", "Simpson")
 )
+```
+```{r}
+plot_richness(
+  pylsq,
+  measures = "Shannon",
+  x = "Project.ID",
+  color = "Country"
+) +
+  geom_boxplot(alpha = 0.4)
+
+table(sample_data(pylsq)$Disease.name)
+
 ```
 
 ```{r}
@@ -441,6 +452,13 @@ adonis2(
   permutations = 999
 )
 
+
+  
+#FUCK DET HELE 
+```
+
+
+```{r}
 #7 PERMANOVA med covariates
 metadata2 <- metadata[
   complete.cases(metadata[, c(
@@ -461,9 +479,6 @@ adonis2(
   data = metadata2,
   permutations = 999
 ) 
-  
-#FUCK DET HELE 
 ```
-
 
 
