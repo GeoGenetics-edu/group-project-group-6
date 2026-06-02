@@ -29,11 +29,13 @@ knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
 
 Loader species phyloseq object
 ```{r}
-#load("C:/Users/mai/OneDrive/Documents/Uni/Metagenomic Analyses of Microbiomes/Projekt/diabetes_t2_D003924/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
+load("C:/Users/mai/OneDrive/Documents/Uni/Metagenomic Analyses of Microbiomes/Projekt/diabetes_t2_D003924/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
 
 #pylsq #Viser et overblik over phyloseq-objektet.
 
-load("project/data/D003924_Diabetes_Mellitus,_T/species/D003924_phyloseq_updated_species.RData")
+#load("project/data/D003924_Diabetes_Mellitus,_T/species/D003924_phyloseq_updated_species.RData")
+
+#load("C:/Uni/Metagenomic Analyses of Microbiomes/Projekt/group-project-group-6/project/data/D003924_Diabetes_Mellitus,_T/speciesD003924_phyloseq_updated_species.RData")
 
 
 sample_data(pylsq) #viser meta data for alle samples
@@ -669,7 +671,7 @@ bind_rows(
 Transform counts with CLR before fitting the adjusted model on a compositional scale.
 
 ```{r}
-ps_clr <- transform_sample_counts(pylsq, function(x) {
+ps_clr <- transform_sample_counts(ps_filtered, function(x) {
   x <- x + 1e-9
   log(x) - mean(log(x)) #tilføjer pseudocounts til alle abundanser
 })
@@ -1236,7 +1238,7 @@ pca_scores %>%
     )
   ) +
   geom_point(
-    size = 3,
+    size = 2,
     alpha = 0.85
   ) +
   scale_color_manual(
