@@ -460,7 +460,56 @@ as.data.frame(clr_pca$x[, 1:2]) %>%
     theme_bw()
 ```
 
-# 17. Agreement across tests
+# 17. Constrained ordination (RDA)
+
+```{r rda-fit}
+clr_mat  <- as.matrix(otu_clr)
+meta_rda <- meta_clr[rownames(clr_mat), ]
+meta_rda$Disease.MESH.ID <- factor(meta_rda$Disease.MESH.ID, levels = c("D006262", "D003924"))
+meta_rda$Sex             <- factor(meta_rda$Sex)
+meta_rda$Host.age        <- as.numeric(meta_rda$Host.age)
+
+keep        <- complete.cases(meta_rda[, c("Disease.MESH.ID", "Sex", "Host.age")])
+clr_mat_rda <- clr_mat[keep, ]
+meta_rda    <- meta_rda[keep, ]
+
+rda_fit <- rda(clr_mat_rda ~ Disease.MESH.ID + Sex + Host.age, data = meta_rda)
+rda_fit
+```
+
+```{r rda-anova}
+anova(rda_fit, permutations = 999)
+anova(rda_fit, by = "term", permutations = 999)
+```
+
+```{r rda-biplot, fig.width=8, fig.height=6}
+pct <- round(100 * rda_fit$CCA$eig / rda_fit$tot.chi, 1)
+
+site <- scores(rda_fit, display = "sites") %>%
+  as.data.frame() %>%
+  rownames_to_column("sample_id") %>%
+  left_join(meta_rda %>% rownames_to_column("sample_id"), by = "sample_id") %>%
+  mutate(Disease = ifelse(Disease.MESH.ID == "D003924", "T2D", "Healthy"))
+
+bp <- scores(rda_fit, display = "bp") %>% as.data.frame() %>% rownames_to_column("predictor")
+arrow_scale <- max(abs(c(site$RDA1, site$RDA2))) * 0.8 / max(sqrt(bp$RDA1^2 + bp$RDA2^2))
+bp <- bp %>% mutate(RDA1 = RDA1 * arrow_scale, RDA2 = RDA2 * arrow_scale)
+
+ggplot(site, aes(RDA1, RDA2)) +
+  geom_point(aes(color = Disease), size = 2, alpha = 0.8) +
+  stat_ellipse(aes(color = Disease), level = 0.95) +
+  geom_segment(data = bp, aes(x = 0, y = 0, xend = RDA1, yend = RDA2),
+               arrow = arrow(length = unit(0.25, "cm")), color = "black", linewidth = 0.6) +
+  geom_text(data = bp, aes(x = RDA1 * 1.1, y = RDA2 * 1.1, label = predictor),
+            color = "black", size = 3) +
+  scale_color_manual(values = c("Healthy" = "#56B4E9", "T2D" = "#E74C3C")) +
+  labs(x = paste0("RDA1 (", pct[1], "%)"), y = paste0("RDA2 (", pct[2], "%)"),
+       color = "Disease",
+       title = "RDA — species community constrained by disease, sex and age") +
+  theme_bw()
+```
+
+# 18. Agreement across tests
 
 ```{r all-tests}
 all_tests <- bind_rows(

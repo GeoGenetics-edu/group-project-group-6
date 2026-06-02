@@ -206,3 +206,5 @@ Testing this difference
 kruskal.test(Shannon ~ Project.ID, data = alpha_div)
 ```
 Significant difference.
+
+*Final summary of why we choose to filter*

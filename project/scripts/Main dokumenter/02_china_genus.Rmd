@@ -27,6 +27,7 @@ library(tidyr)
 
 # 2. Load and filter to China
 
+From the previous file, we have provided arguments as to why we only will look at the chinese cohort. Therefore loading the object and instantly filtering so we only have the chinese cohort data.
 ```{r load-filter}
 load("project/data/D003924_Diabetes_Mellitus,_T/genus/D003924_phyloseq_updated_genus.RData")
 ps <- subset_samples(pylsq, Project.ID == "PRJNA422434")
@@ -35,7 +36,9 @@ rm(pylsq)
 ps
 table(sample_data(ps)$Disease.MESH.ID)
 ```
-
+Now the above shows that we have 359 samples and still 58 taxa on genus level.
+We can also observe a more even distribution of healthy/sick.
+Otherwise meta data is the same 
 ```{r alpha-prep}
 alpha <- estimate_richness(ps, measures = c("Shannon", "Simpson")) |>
   rownames_to_column("sample_id")
