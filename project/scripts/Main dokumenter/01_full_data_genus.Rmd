@@ -205,6 +205,9 @@ Testing this difference
 ```{r kruskal-project}
 kruskal.test(Shannon ~ Project.ID, data = alpha_div)
 ```
-Significant difference.
+Significant difference. Kruskal-Wallis only tells us the projects differ overall, so we follow up with pairwise Wilcoxon (BH-corrected) to see which project pairs differ.
+```{r pairwise-project}
+pairwise.wilcox.test(alpha_div$Shannon, alpha_div$Project.ID, p.adjust.method = "BH")
+```
 
 *Final summary of why we choose to filter*

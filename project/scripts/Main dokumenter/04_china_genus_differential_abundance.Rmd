@@ -1,5 +1,5 @@
 ---
-title: "3 — Chinese cohort (species level): differential abundance"
+title: "4 — Chinese cohort (genus level): differential abundance"
 author: "Group 6"
 date: "`r Sys.Date()`"
 output:
@@ -27,10 +27,10 @@ library(ggplot2)
 library(broom)
 ```
 
-# 2. Load species data and filter to China
+# 2. Load genus data and filter to China
 
 ```{r load-filter}
-load("project/data/D003924_Diabetes_Mellitus,_T/species/D003924_phyloseq_updated_species.RData")
+load("project/data/D003924_Diabetes_Mellitus,_T/genus/D003924_phyloseq_updated_genus.RData")
 ps <- subset_samples(pylsq, Project.ID == "PRJNA422434")
 rm(pylsq)
 
@@ -57,9 +57,8 @@ dat_rel <- otu_rel %>%
 # 4. Community composition
 
 ```{r composition-genus, fig.width=8, fig.height=5}
-ps_genus10 <- tax_glom(ps_rel, taxrank = "Genus")
-top10_g    <- names(sort(taxa_sums(ps_genus10), decreasing = TRUE))[1:10]
-ps_g_top   <- prune_taxa(top10_g, ps_genus10)
+top10_g    <- names(sort(taxa_sums(ps_rel), decreasing = TRUE))[1:10]
+ps_g_top   <- prune_taxa(top10_g, ps_rel)
 ps_g_disease <- merge_samples(ps_g_top, group = "Disease.MESH.ID") |>
   transform_sample_counts(function(x) x / sum(x))
 
@@ -70,19 +69,6 @@ plot_bar(ps_g_disease, fill = "Genus") +
        title = "Top 10 genera by disease group")
 ```
 
-```{r composition-species, fig.width=8, fig.height=5}
-top10_s      <- names(sort(taxa_sums(ps_rel), decreasing = TRUE))[1:10]
-ps_s_top     <- prune_taxa(top10_s, ps_rel)
-ps_s_disease <- merge_samples(ps_s_top, group = "Disease.MESH.ID") |>
-  transform_sample_counts(function(x) x / sum(x))
-
-plot_bar(ps_s_disease, fill = "Species") +
-  scale_x_discrete(labels = c("D006262" = "Healthy", "D003924" = "T2D")) +
-  theme_bw() +
-  labs(x = "Disease group", y = "Relative abundance",
-       title = "Top 10 species by disease group")
-```
-
 # 5. Diagnostics
 
 ```{r zero-inflation, fig.width=7, fig.height=4}
@@ -91,15 +77,15 @@ dat_rel %>%
   summarise(prop_zero = mean(rel_abund == 0), .groups = "drop") %>%
   ggplot(aes(prop_zero)) +
     geom_histogram(binwidth = 0.05, fill = "steelblue", color = "white") +
-    labs(x = "Proportion of samples with abundance = 0", y = "Number of species",
-         title = "Zero-inflation across species") +
+    labs(x = "Proportion of samples with abundance = 0", y = "Number of genera",
+         title = "Zero-inflation across genera") +
     theme_bw()
 ```
 
 ```{r right-skew, fig.width=9, fig.height=5}
 set.seed(42)
 example_taxa <- dat_rel %>%
-  group_by(taxon, Species) %>%
+  group_by(taxon, Genus) %>%
   summarise(prop_nonzero = mean(rel_abund > 0), .groups = "drop") %>%
   filter(prop_nonzero > 0.4, prop_nonzero < 0.9) %>%
   slice_sample(n = 6) %>%
@@ -109,21 +95,9 @@ dat_rel %>%
   filter(taxon %in% example_taxa, rel_abund > 0) %>%
   ggplot(aes(rel_abund)) +
     geom_histogram(bins = 20, fill = "steelblue", color = "white") +
-    facet_wrap(~ Species, scales = "free") +
+    facet_wrap(~ Genus, scales = "free") +
     labs(x = "Relative abundance (non-zero values)", y = "Count",
          title = "Right-skewed abundance distributions") +
-    theme_bw()
-```
-
-```{r qq-plots, fig.width=9, fig.height=5}
-dat_rel %>%
-  filter(taxon %in% example_taxa) %>%
-  ggplot(aes(sample = rel_abund)) +
-    stat_qq(size = 0.8, alpha = 0.6) +
-    stat_qq_line(color = "red", linetype = "dashed") +
-    facet_wrap(~ Species, scales = "free") +
-    labs(x = "Theoretical quantiles (normal)", y = "Sample quantiles",
-         title = "Q-Q plots: departures from normality") +
     theme_bw()
 ```
 
@@ -131,7 +105,7 @@ dat_rel %>%
 
 ```{r wilcox-results}
 wilcox_results <- dat_rel %>%
-  group_by(taxon, Genus, Species) %>%
+  group_by(taxon, Genus) %>%
   summarise(
     p_value      = wilcox.test(rel_abund ~ Disease.MESH.ID, exact = FALSE)$p.value,
     mean_T2D     = mean(rel_abund[Disease.MESH.ID == "D003924"]),
@@ -158,7 +132,7 @@ wilcox_results %>%
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     theme_bw() +
     labs(x = "log2 fold change (T2D vs Healthy)", y = "-log10(q)", color = NULL,
-         title = "Wilcoxon: Differential abundance between Disease.MESH.ID groups")
+         title = "Wilcoxon: differential abundance (genus level)")
 ```
 
 ```{r wilcox-bar, fig.width=8, fig.height=5}
@@ -167,13 +141,13 @@ bind_rows(
   wilcox_results %>% filter(q_value < 0.05) %>% arrange(-log2_fc) %>% head(10)
 ) %>%
   distinct() %>%
-  mutate(label = make.unique(as.character(Species), sep = "_"),
+  mutate(label = make.unique(as.character(Genus), sep = "_"),
          direction = ifelse(log2_fc > 0, "T2D-enriched", "T2D-depleted")) %>%
   ggplot(aes(reorder(label, -q_value), log2_fc, fill = direction)) +
     geom_col() + coord_flip() +
     scale_fill_manual(values = c("T2D-enriched" = "#E74C3C", "T2D-depleted" = "#3498DB")) +
     labs(x = NULL, y = "log2 fold change (T2D vs Healthy)", fill = NULL,
-         title = "Top significant species (Wilcoxon, q < 0.05)") +
+         title = "Top significant genera (Wilcoxon, q < 0.05)") +
     theme_bw()
 ```
 
@@ -182,7 +156,7 @@ bind_rows(
 ```{r glm-unadj}
 glm_unadj <- dat_rel %>%
   mutate(Disease.MESH.ID = factor(Disease.MESH.ID, levels = c("D006262", "D003924"))) %>%
-  group_by(taxon, Genus, Species) %>%
+  group_by(taxon, Genus) %>%
   group_modify(~ broom::tidy(glm(log10(rel_abund + 1e-6) ~ Disease.MESH.ID,
                                  data = .x, family = gaussian()))) %>%
   ungroup() %>%
@@ -206,7 +180,7 @@ glm_unadj %>%
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     theme_bw() +
     labs(x = "GLM estimate (log10 RA, T2D vs Healthy)", y = "-log10(q)", color = NULL,
-         title = "GLM unadjusted: Differential abundance between Disease.MESH.ID groups")
+         title = "GLM unadjusted (genus level)")
 ```
 
 # 8. GLM — adjusted for Sex
@@ -215,7 +189,7 @@ glm_unadj %>%
 glm_sex <- dat_rel %>%
   mutate(Disease.MESH.ID = factor(Disease.MESH.ID, levels = c("D006262", "D003924")),
          Sex = factor(Sex)) %>%
-  group_by(taxon, Genus, Species) %>%
+  group_by(taxon, Genus) %>%
   group_modify(~ broom::tidy(glm(log10(rel_abund + 1e-6) ~ Disease.MESH.ID + Sex,
                                  data = .x, family = gaussian()))) %>%
   ungroup() %>%
@@ -239,7 +213,7 @@ glm_sex %>%
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     theme_bw() +
     labs(x = "GLM estimate (log10 RA, T2D vs Healthy)", y = "-log10(q)", color = NULL,
-         title = "GLM adjusted for Sex: Differential abundance between Disease.MESH.ID groups")
+         title = "GLM adjusted for Sex (genus level)")
 ```
 
 # 9. GLM — adjusted for Age
@@ -248,7 +222,7 @@ glm_sex %>%
 glm_age <- dat_rel %>%
   mutate(Disease.MESH.ID = factor(Disease.MESH.ID, levels = c("D006262", "D003924")),
          Host.age = as.numeric(Host.age)) %>%
-  group_by(taxon, Genus, Species) %>%
+  group_by(taxon, Genus) %>%
   group_modify(~ broom::tidy(glm(log10(rel_abund + 1e-6) ~ Disease.MESH.ID + Host.age,
                                  data = .x, family = gaussian()))) %>%
   ungroup() %>%
@@ -265,14 +239,14 @@ glm_age %>%
                                q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
                                TRUE                          ~ "Not significant")) %>%
   ggplot(aes(estimate, neg_log10_q, color = direction)) +
-    geom_point(alpha = 0.6, size = 1.8) +
+    geom_point(alpha = 0.6, size = 2) +
     scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
                                   "T2D-depleted" = "#3498DB", "Not significant" = "grey70")) +
     geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     theme_bw() +
     labs(x = "GLM estimate (log10 RA, T2D vs Healthy)", y = "-log10(q)", color = NULL,
-         title = "GLM adjusted for Age: Differential abundance between Disease.MESH.ID groups")
+         title = "GLM adjusted for Age (genus level)")
 ```
 
 # 10. GLM — adjusted for Sex + Age
@@ -281,7 +255,7 @@ glm_age %>%
 glm_sexage <- dat_rel %>%
   mutate(Disease.MESH.ID = factor(Disease.MESH.ID, levels = c("D006262", "D003924")),
          Sex = factor(Sex), Host.age = as.numeric(Host.age)) %>%
-  group_by(taxon, Genus, Species) %>%
+  group_by(taxon, Genus) %>%
   group_modify(~ broom::tidy(glm(log10(rel_abund + 1e-6) ~ Disease.MESH.ID + Sex + Host.age,
                                  data = .x, family = gaussian()))) %>%
   ungroup() %>%
@@ -298,45 +272,17 @@ glm_sexage %>%
                                q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
                                TRUE                          ~ "Not significant")) %>%
   ggplot(aes(estimate, neg_log10_q, color = direction)) +
-    geom_point(alpha = 0.6, size = 1.8) +
+    geom_point(alpha = 0.6, size = 2) +
     scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
                                   "T2D-depleted" = "#3498DB", "Not significant" = "grey70")) +
     geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     theme_bw() +
     labs(x = "GLM estimate (log10 RA, T2D vs Healthy)", y = "-log10(q)", color = NULL,
-         title = "GLM adjusted for Sex + Age: Differential abundance between Disease.MESH.ID groups")
+         title = "GLM adjusted for Sex + Age (genus level)")
 ```
 
-# 11. Impact of covariate adjustment on the disease effect
-
-```{r adjust-age-impact, fig.width=6, fig.height=5}
-glm_unadj %>%
-  select(taxon, unadjusted = estimate) %>%
-  left_join(glm_age %>% select(taxon, adjusted = estimate), by = "taxon") %>%
-  ggplot(aes(unadjusted, adjusted)) +
-    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
-    geom_point(alpha = 0.5) +
-    theme_bw() +
-    labs(x = "Disease estimate (unadjusted)",
-         y = "Disease estimate (adjusted for age)",
-         title = "Impact of age adjustment on the disease effect")
-```
-
-```{r adjust-sex-impact, fig.width=6, fig.height=5}
-glm_unadj %>%
-  select(taxon, unadjusted = estimate) %>%
-  left_join(glm_sex %>% select(taxon, adjusted = estimate), by = "taxon") %>%
-  ggplot(aes(unadjusted, adjusted)) +
-    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
-    geom_point(alpha = 0.5) +
-    theme_bw() +
-    labs(x = "Disease estimate (unadjusted)",
-         y = "Disease estimate (adjusted for sex)",
-         title = "Impact of sex adjustment on the disease effect")
-```
-
-# 12. CLR build
+# 11. CLR build
 
 ```{r clr-build}
 ps_clr <- transform_sample_counts(ps, function(x) { x <- x + 1e-9; log(x) - mean(log(x)) })
@@ -351,12 +297,12 @@ dat_clr <- otu_clr %>%
   left_join(tax_clr  %>% rownames_to_column("taxon"),     by = "taxon")
 ```
 
-# 13. CLR — unadjusted
+# 12. CLR — unadjusted
 
 ```{r clr-unadj}
 clr_unadj <- dat_clr %>%
   mutate(Disease.MESH.ID = factor(Disease.MESH.ID, levels = c("D006262", "D003924"))) %>%
-  group_by(taxon, Genus, Species) %>%
+  group_by(taxon, Genus) %>%
   group_modify(~ broom::tidy(lm(clr ~ Disease.MESH.ID, data = .x))) %>%
   ungroup() %>%
   filter(term == "Disease.MESH.IDD003924") %>%
@@ -372,23 +318,23 @@ clr_unadj %>%
                                q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
                                TRUE                          ~ "Not significant")) %>%
   ggplot(aes(estimate, neg_log10_q, color = direction)) +
-    geom_point(alpha = 0.6, size = 1.8) +
+    geom_point(alpha = 0.6, size = 2) +
     scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
                                   "T2D-depleted" = "#3498DB", "Not significant" = "grey70")) +
     geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     theme_bw() +
     labs(x = "CLR estimate (T2D vs Healthy)", y = "-log10(q)", color = NULL,
-         title = "CLR unadjusted: Differential abundance between Disease.MESH.ID groups")
+         title = "CLR unadjusted (genus level)")
 ```
 
-# 14. CLR — adjusted for Sex
+# 13. CLR — adjusted for Sex
 
 ```{r clr-sex}
 clr_sex <- dat_clr %>%
   mutate(Disease.MESH.ID = factor(Disease.MESH.ID, levels = c("D006262", "D003924")),
          Sex = factor(Sex)) %>%
-  group_by(taxon, Genus, Species) %>%
+  group_by(taxon, Genus) %>%
   group_modify(~ broom::tidy(lm(clr ~ Disease.MESH.ID + Sex, data = .x))) %>%
   ungroup() %>%
   filter(term == "Disease.MESH.IDD003924") %>%
@@ -404,23 +350,23 @@ clr_sex %>%
                                q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
                                TRUE                          ~ "Not significant")) %>%
   ggplot(aes(estimate, neg_log10_q, color = direction)) +
-    geom_point(alpha = 0.6, size = 1.8) +
+    geom_point(alpha = 0.6, size = 2) +
     scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
                                   "T2D-depleted" = "#3498DB", "Not significant" = "grey70")) +
     geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     theme_bw() +
     labs(x = "CLR estimate (T2D vs Healthy)", y = "-log10(q)", color = NULL,
-         title = "CLR adjusted for Sex: Differential abundance between Disease.MESH.ID groups")
+         title = "CLR adjusted for Sex (genus level)")
 ```
 
-# 15. CLR — adjusted for Age
+# 14. CLR — adjusted for Age
 
 ```{r clr-age}
 clr_age <- dat_clr %>%
   mutate(Disease.MESH.ID = factor(Disease.MESH.ID, levels = c("D006262", "D003924")),
          Host.age = as.numeric(Host.age)) %>%
-  group_by(taxon, Genus, Species) %>%
+  group_by(taxon, Genus) %>%
   group_modify(~ broom::tidy(lm(clr ~ Disease.MESH.ID + Host.age, data = .x))) %>%
   ungroup() %>%
   filter(term == "Disease.MESH.IDD003924") %>%
@@ -436,23 +382,23 @@ clr_age %>%
                                q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
                                TRUE                          ~ "Not significant")) %>%
   ggplot(aes(estimate, neg_log10_q, color = direction)) +
-    geom_point(alpha = 0.6, size = 1.8) +
+    geom_point(alpha = 0.6, size = 2) +
     scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
                                   "T2D-depleted" = "#3498DB", "Not significant" = "grey70")) +
     geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     theme_bw() +
     labs(x = "CLR estimate (T2D vs Healthy)", y = "-log10(q)", color = NULL,
-         title = "CLR adjusted for Age: Differential abundance between Disease.MESH.ID groups")
+         title = "CLR adjusted for Age (genus level)")
 ```
 
-# 16. CLR — adjusted for Sex + Age
+# 15. CLR — adjusted for Sex + Age
 
 ```{r clr-sexage}
 clr_sexage <- dat_clr %>%
   mutate(Disease.MESH.ID = factor(Disease.MESH.ID, levels = c("D006262", "D003924")),
          Sex = factor(Sex), Host.age = as.numeric(Host.age)) %>%
-  group_by(taxon, Genus, Species) %>%
+  group_by(taxon, Genus) %>%
   group_modify(~ broom::tidy(lm(clr ~ Disease.MESH.ID + Sex + Host.age, data = .x))) %>%
   ungroup() %>%
   filter(term == "Disease.MESH.IDD003924") %>%
@@ -468,17 +414,17 @@ clr_sexage %>%
                                q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
                                TRUE                          ~ "Not significant")) %>%
   ggplot(aes(estimate, neg_log10_q, color = direction)) +
-    geom_point(alpha = 0.6, size = 1.8) +
+    geom_point(alpha = 0.6, size = 2) +
     scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
                                   "T2D-depleted" = "#3498DB", "Not significant" = "grey70")) +
     geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     theme_bw() +
     labs(x = "CLR estimate (T2D vs Healthy)", y = "-log10(q)", color = NULL,
-         title = "CLR adjusted for Sex + Age: Differential abundance between Disease.MESH.ID groups")
+         title = "CLR adjusted for Sex + Age (genus level)")
 ```
 
-# 17. PCA of CLR-transformed species
+# 16. PCA of CLR-transformed genera
 
 ```{r pca, fig.width=7, fig.height=5}
 clr_mat  <- as.matrix(otu_clr)
@@ -496,14 +442,13 @@ as.data.frame(clr_pca$x[, 1:2]) %>%
     scale_color_manual(values = c("Healthy" = "#56B4E9", "T2D" = "#E74C3C")) +
     labs(x = paste0("PC1 (", pca_var[1], "%)"),
          y = paste0("PC2 (", pca_var[2], "%)"),
-         title = "PCA of CLR-transformed species profiles") +
+         title = "PCA of CLR-transformed genera") +
     theme_bw()
 ```
 
-# 18. Constrained ordination (RDA)
+# 17. Constrained ordination (RDA)
 
 ```{r rda-fit}
-clr_mat  <- as.matrix(otu_clr)
 meta_rda <- meta_clr[rownames(clr_mat), ]
 meta_rda$Disease.MESH.ID <- factor(meta_rda$Disease.MESH.ID, levels = c("D006262", "D003924"))
 meta_rda$Sex             <- factor(meta_rda$Sex)
@@ -545,23 +490,23 @@ ggplot(site, aes(RDA1, RDA2)) +
   scale_color_manual(values = c("Healthy" = "#56B4E9", "T2D" = "#E74C3C")) +
   labs(x = paste0("RDA1 (", pct[1], "%)"), y = paste0("RDA2 (", pct[2], "%)"),
        color = "Disease",
-       title = "RDA — species community constrained by disease, sex and age") +
+       title = "RDA — genus community constrained by disease, sex and age") +
   theme_bw()
 ```
 
-# 19. Agreement across tests
+# 18. Agreement across tests
 
 ```{r all-tests}
 all_tests <- bind_rows(
-  wilcox_results %>% transmute(taxon, Genus, Species, method = "Wilcoxon",     effect = log2_fc, q_value),
-  glm_unadj      %>% transmute(taxon, Genus, Species, method = "GLM unadj",    effect = estimate, q_value),
-  glm_sex        %>% transmute(taxon, Genus, Species, method = "GLM Sex",      effect = estimate, q_value),
-  glm_age        %>% transmute(taxon, Genus, Species, method = "GLM Age",      effect = estimate, q_value),
-  glm_sexage     %>% transmute(taxon, Genus, Species, method = "GLM Sex+Age",  effect = estimate, q_value),
-  clr_unadj      %>% transmute(taxon, Genus, Species, method = "CLR unadj",    effect = estimate, q_value),
-  clr_sex        %>% transmute(taxon, Genus, Species, method = "CLR Sex",      effect = estimate, q_value),
-  clr_age        %>% transmute(taxon, Genus, Species, method = "CLR Age",      effect = estimate, q_value),
-  clr_sexage     %>% transmute(taxon, Genus, Species, method = "CLR Sex+Age",  effect = estimate, q_value)
+  wilcox_results %>% transmute(taxon, Genus, method = "Wilcoxon",     effect = log2_fc, q_value),
+  glm_unadj      %>% transmute(taxon, Genus, method = "GLM unadj",    effect = estimate, q_value),
+  glm_sex        %>% transmute(taxon, Genus, method = "GLM Sex",      effect = estimate, q_value),
+  glm_age        %>% transmute(taxon, Genus, method = "GLM Age",      effect = estimate, q_value),
+  glm_sexage     %>% transmute(taxon, Genus, method = "GLM Sex+Age",  effect = estimate, q_value),
+  clr_unadj      %>% transmute(taxon, Genus, method = "CLR unadj",    effect = estimate, q_value),
+  clr_sex        %>% transmute(taxon, Genus, method = "CLR Sex",      effect = estimate, q_value),
+  clr_age        %>% transmute(taxon, Genus, method = "CLR Age",      effect = estimate, q_value),
+  clr_sexage     %>% transmute(taxon, Genus, method = "CLR Sex+Age",  effect = estimate, q_value)
 ) %>%
   mutate(method = factor(method, levels = c(
     "Wilcoxon", "GLM unadj", "GLM Sex", "GLM Age", "GLM Sex+Age",
@@ -576,7 +521,7 @@ all_tests %>%
 
 ```{r consensus}
 all_tests %>%
-  group_by(taxon, Genus, Species) %>%
+  group_by(taxon, Genus) %>%
   summarise(n_tests_sig = sum(q_value < 0.05, na.rm = TRUE), .groups = "drop") %>%
   filter(n_tests_sig > 0) %>%
   arrange(desc(n_tests_sig))
@@ -590,8 +535,8 @@ all_tests %>%
   count(n_tests_sig) %>%
   ggplot(aes(factor(n_tests_sig), n)) +
     geom_col(fill = "steelblue") +
-    labs(x = "Number of tests with q < 0.05 (of 9)", y = "Number of species",
-         title = "How many tests agree per species") +
+    labs(x = "Number of tests with q < 0.05 (of 9)", y = "Number of genera",
+         title = "How many tests agree per genus") +
     theme_bw()
 ```
 
@@ -599,12 +544,12 @@ all_tests %>%
 sig_taxa <- all_tests %>% filter(q_value < 0.05) %>% distinct(taxon) %>% pull(taxon)
 
 label_map <- all_tests %>%
-  distinct(taxon, Species) %>%
-  mutate(label = make.unique(as.character(Species), sep = "_"))
+  distinct(taxon, Genus) %>%
+  mutate(label = make.unique(as.character(Genus), sep = "_"))
 
 all_tests %>%
   filter(taxon %in% sig_taxa) %>%
-  left_join(label_map, by = c("taxon", "Species")) %>%
+  left_join(label_map, by = c("taxon", "Genus")) %>%
   mutate(signed_neg_log10_q = sign(effect) * pmin(-log10(q_value), 10)) %>%
   ggplot(aes(method, label, fill = signed_neg_log10_q)) +
     geom_tile(color = "white") +
@@ -612,7 +557,7 @@ all_tests %>%
     scale_fill_gradient2(low = "#3498DB", mid = "white", high = "#E74C3C", midpoint = 0,
                          name = "signed\n-log10(q)") +
     labs(x = NULL, y = NULL,
-         title = "Which taxa the tests agree on (* = q < 0.05)") +
+         title = "Which genera the tests agree on (* = q < 0.05)") +
     theme_bw() +
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
