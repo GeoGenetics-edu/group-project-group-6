@@ -51,12 +51,19 @@ plot_richness(
   pylsq,
   measures = "Shannon",
   x = "Project.ID",
-  color = "Country"
+  color = "Project.ID"
 ) +
   geom_boxplot(
     aes(group = Project.ID),
     alpha = 0.4,
     outlier.shape = NA
+  ) +
+  scale_color_manual(
+    values = c(
+      "orange",
+      "forestgreen",
+      "purple"
+    )
   )
 
 ```
@@ -241,6 +248,20 @@ plot_ordination(
   type = "samples",
   color = "Disease.MESH.ID"
 )
+
+library(ggplot2)
+
+plot_ordination(
+  ps_rel,
+  ord_bray,
+  type = "samples",
+  color = "Disease.MESH.ID"
+) +
+  geom_point(size = 1) +
+  stat_ellipse(
+    aes(group = Disease.MESH.ID),
+    level = 0.95
+  )
 ```
 
 
@@ -258,6 +279,8 @@ plot_scree(ord_bray)
 Vil gerne undersøge hvor meget af variationen i mikrobiomerne der kan forklares af hver variabel.
 Vi undersøger om forskelle i mikrobiomet kan forklares af hvilket projekt prøven kommer fra samt om de er syge/ikke syge. 
 
+Project.ID testes først.
+Disease.MESH.ID testes derefter på den variation, der er tilbage efter Project.ID.
 ```{r}
 meta <- data.frame(sample_data(pylsq))
 
@@ -269,8 +292,9 @@ adonis2(
 Her ser vi at modellen forklare ca. 14.3% af variationen i mikrobiomet. P-værdien er 0,001 dvs. modellen er statistisk signifikant og mikrobiomerne variere systematisk med variablerne. 
 
 
-Nu vil jeg gerne undersøge hvad de to variable kan forklare individuelt:
+Nu vil jeg gerne undersøge hvad de to variable kan forklare når der tages højde for den anden:
 ```{r}
+#justeret sygdomseffekt
 adonis2(
   bray_dist ~ Project.ID + Disease.MESH.ID,
   data = meta,
@@ -281,4 +305,41 @@ Her ser vi at project ID forklare hele 11% af variationen, hvorimod sygdomsstatu
 
 PERMANOVA analysis based on Bray–Curtis distances showed that both Project.ID and Disease.MESH.ID were significantly associated with microbiome composition. Project.ID explained the largest proportion of variation (R² = 0.113, p = 0.001), indicating substantial study- or cohort-specific effects. Disease.MESH.ID also showed a significant association with microbiome composition (R² = 0.0138, p = 0.001), although the explained variance was considerably smaller.
 
+
+Her kan vi se
+Hvor stor sygdomseffekten ser ud uden kontrol.
+Hvor meget af den der forsvinder, når studieeffekter medregnes.
+```{r}
+# rå sygdomseffekt
+adonis2(bray_dist ~ Disease.MESH.ID, data = meta)
+
+
+```
+Viser at ca. 3% af variationen forklares af sygdom (første test) R2 værdi. 
+
+
+
+```{r}
+# PERMANOVA samme som ovenfor
+adonis2(
+    bray_dist ~ Disease.MESH.ID,
+    data = meta
+)
+
+# dispersion
+disp <- betadisper(
+    bray_dist,
+    meta$Disease.MESH.ID
+)
+
+permutest(disp)
+```
+
+Der er en signifikant forskel mellem sygdomsgrupperne i Bray-Curtis-rummet (PERMANOVA, R² = 0.030, p = 0.001), men grupperne udviser også signifikant forskellig multivariat dispersion (PERMDISP, p = 0.001). Derfor kan PERMANOVA-signalet ikke entydigt tilskrives forskelle i centroidplacering alene.
+
+
+```{r}
+disp_proj <- betadisper(bray_dist, meta$Project.ID)
+permutest(disp_proj)
+```
 
