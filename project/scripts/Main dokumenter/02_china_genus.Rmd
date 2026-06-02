@@ -38,7 +38,8 @@ table(sample_data(ps)$Disease.MESH.ID)
 ```
 Now the above shows that we have 359 samples and still 58 taxa on genus level.
 We can also observe a more even distribution of healthy/sick.
-Otherwise meta data is the same 
+
+
 ```{r alpha-prep}
 alpha <- estimate_richness(ps, measures = c("Shannon", "Simpson")) |>
   rownames_to_column("sample_id")
@@ -51,12 +52,78 @@ alpha_div <- inner_join(alpha, meta, by = "sample_id") |>
   mutate(Disease = ifelse(Disease.MESH.ID == "D003924", "T2D", "Healthy"))
 ```
 
-# 3. Sequencing depth
+# 3. Metadata / covariate balance between disease groups
 
+Before testing we check whether the disease groups are balanced on the covariates (sex, recent antibiotic use, age). Any imbalance is a potential confounder. These we can adjust for in file 3.
+
+Firstly, sex imbalance?
+
+```{r meta-sex}
+table(alpha_div$Disease, alpha_div$Sex)
+chisq.test(table(alpha_div$Disease, alpha_div$Sex))
+```
+Not significant. *why this test?*
+
+
+Now, recent antibiotics use? 
+```{r meta-antibiotics}
+table(alpha_div$Disease, alpha_div$Recent.antibiotics.use, useNA = "ifany")
+```
+None. Perfect.
+
+Now checking age. 
+```{r meta-age}
+alpha_div |>
+  mutate(Host.age = as.numeric(Host.age)) |>
+  group_by(Disease) |>
+  summarise(median_age = median(Host.age, na.rm = TRUE),
+            IQR_age    = IQR(Host.age, na.rm = TRUE),
+            n          = dplyr::n(),
+            .groups = "drop")
+
+wilcox.test(as.numeric(Host.age) ~ Disease.MESH.ID, data = alpha_div)
+```
+Somewhat big difference in median age. 44 and 55. 
+Significant result. Potential confounder.
+
+Plotting it.
+```{r meta-age-plot, fig.width=5, fig.height=4}
+alpha_div |>
+  mutate(Host.age = as.numeric(Host.age)) |>
+  ggplot(aes(Disease, Host.age, fill = Disease)) +
+    geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+    geom_jitter(width = 0.2, alpha = 0.3, size = 0.7) +
+    scale_fill_manual(values = c("Healthy" = "#56B4E9", "T2D" = "#E74C3C")) +
+    theme_bw() +
+    theme(legend.position = "none") +
+    labs(x = NULL, y = "Host age", title = "Age by disease (Chinese cohort)")
+```
+
+Lastly BMI — note it is missing for most samples, so this is only on the complete cases.
+```{r meta-bmi}
+alpha_div |>
+  mutate(BMI = as.numeric(BMI)) |>
+  group_by(Disease) |>
+  summarise(median_BMI = median(BMI, na.rm = TRUE),
+            IQR_BMI    = IQR(BMI, na.rm = TRUE),
+            n_with_BMI = sum(!is.na(BMI)),
+            n          = dplyr::n(),
+            .groups = "drop")
+
+wilcox.test(as.numeric(BMI) ~ Disease.MESH.ID, data = alpha_div)
+```
+~58% of BMI values are missing, and on the complete cases BMI does not differ between groups (p = 0.34). So BMI is not a confounder here, and is only used as a sensitivity covariate (n = 151) in file 3, not in the primary model.
+
+# 4. Sequencing depth
+
+
+Does alpha diversity correlate with sequencing depth?
 ```{r depth-by-group}
 wilcox.test(Nr..reads.sequenced ~ Disease.MESH.ID, data = alpha_div)
 ```
+From this test we find that sequencing depth differs between the meshids. (p-value = 5.582e-05)
 
+We then need to test if it correalates with alpha diversity.
 ```{r depth-vs-shannon, fig.width=7, fig.height=4}
 cor.test(alpha_div$Nr..reads.sequenced, alpha_div$Shannon, method = "spearman")
 
@@ -69,9 +136,11 @@ ggplot(alpha_div, aes(x = Nr..reads.sequenced, y = Shannon, color = Disease)) +
   labs(x = "Reads sequenced (log10)", y = "Shannon",
        title = "Sequencing depth vs Shannon diversity (Chinese cohort)")
 ```
+Not significantly. Good. So any difference in alpha diversity is not an artefact of sequencing depth.
 
-# 4. Alpha diversity by disease
+# 5. Alpha diversity by disease
 
+Now looking at same alpha diversity measures as in file 1 to check if it's different when we now only have the chineses cohort in the data.
 ```{r alpha-plot, fig.width=8, fig.height=4}
 alpha_div |>
   pivot_longer(c(Shannon, Simpson), names_to = "metric", values_to = "value") |>
@@ -85,7 +154,7 @@ alpha_div |>
     labs(x = NULL, y = "Alpha diversity",
          title = "Alpha diversity by disease (Chinese cohort, genus level)")
 ```
-
+Testing if still significantly different. 
 ```{r alpha-test}
 wilcox.test(Shannon ~ Disease.MESH.ID, data = alpha_div)
 wilcox.test(Simpson ~ Disease.MESH.ID, data = alpha_div)
@@ -96,9 +165,11 @@ alpha_div |>
             median_Simpson = median(Simpson),
             .groups = "drop")
 ```
+Still significant however less than with the full dataset. This remains surprising.
 
-# 5. Beta diversity by disease
+# 6. Beta diversity by disease
 
+Now investigating beta diversity. (Bray Curtis)
 ```{r beta-dist}
 ps_rel    <- transform_sample_counts(ps, function(x) x / sum(x))
 bray_dist <- distance(ps_rel, method = "bray")
@@ -106,6 +177,8 @@ ord_bray  <- ordinate(ps_rel, method = "PCoA", distance = bray_dist)
 sample_df <- sample_data(ps_rel) |> data.frame()
 ```
 
+
+Plotting PCoA of beta diversity colored by meshid. 
 ```{r pcoa-disease, fig.width=8, fig.height=5}
 plot_ordination(ps_rel, ord_bray, color = "Disease.MESH.ID") +
   geom_point(size = 2, alpha = 0.7) +
@@ -116,7 +189,9 @@ plot_ordination(ps_rel, ord_bray, color = "Disease.MESH.ID") +
   theme_bw() +
   labs(title = "Bray–Curtis PCoA — disease (Chinese cohort)")
 ```
+Not a lot to conclude. Maybe a small difference, but no clean seperation.
 
+Let's test this. Frsit permanova, then betadisper. 
 ```{r permanova}
 adonis2(bray_dist ~ Disease.MESH.ID, data = sample_df, permutations = 999)
 ```
