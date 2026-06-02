@@ -2,6 +2,12 @@
 title: "Final_analysis"
 output: html_document
 ---
+```{r setup}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+
 ```{r}
 library(phyloseq)
 library(vegan)
@@ -16,15 +22,19 @@ library(microbiome)
 ```
 
 
-```{r}
-load("/Users/natalineschlegel/Desktop/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+## Load and filter species data
 
+```{r load-data}
+load("project/data/D003924_Diabetes_Mellitus,_T/species/D003924_phyloseq_updated_species.RData")
 ps <- subset_samples(pylsq, Project.ID == "PRJNA422434")
 rm(pylsq)
+
 ps
 table(sample_data(ps)$Disease.MESH.ID)
-
+ntaxa(ps)
 ```
+
+
 
 
 MetaPhlAn kunne ikke identificere organismen sikkert helt ned til species-niveau.
@@ -36,8 +46,8 @@ Roseburia faecis det viser at men højere til familien jensen men mangler et for
 
 
 
-
 ```{r}
+#longformat
 ps_rel  <- transform_sample_counts(ps, function(x) x / sum(x))
 otu_rel <- as(otu_table(ps_rel), "matrix") %>% t() %>% as.data.frame()
 meta_rel <- data.frame(sample_data(ps_rel))
