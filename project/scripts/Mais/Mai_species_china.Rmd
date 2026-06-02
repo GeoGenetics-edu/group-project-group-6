@@ -16,14 +16,25 @@ library(lme4)
 library(lmerTest)
 library(broom.mixed)
 library(microbiome)
+library(tidyverse)
+library(rprojroot)
 ```
+
+
+```{r}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+```
+
 
 
 Loader species phyloseq object
 ```{r}
-load("C:/Users/mai/OneDrive/Documents/Uni/Metagenomic Analyses of Microbiomes/Projekt/diabetes_t2_D003924/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
+#load("C:/Users/mai/OneDrive/Documents/Uni/Metagenomic Analyses of Microbiomes/Projekt/diabetes_t2_D003924/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
 
 #pylsq #Viser et overblik over phyloseq-objektet.
+
+load("project/data/D003924_Diabetes_Mellitus,_T/species/D003924_phyloseq_updated_species.RData")
+
 
 sample_data(pylsq) #viser meta data for alle samples
 rank_names(pylsq) #Viser hvilke taxonomiske niveauer der findes.
@@ -108,12 +119,12 @@ wilcox_results <- dat_rel %>%
   mutate(
     q_value = p.adjust(p_value, method = "BH")
   )
-head(wilcox_results, 10)
+wilcox_results %>% arrange(q_value) %>% head(10)
 
 
 
 ```
-Vi ser NaN fordi der nok er nogle taxa som er 0 i alle samples. Dvs. der er taxa tilstede i tabellen som ingen af samples har. Det kan fx være at disse taxa var tilstede i nogle af de andre projekter men nu er blevet filtreret fra. 
+(nu har jeg arranget det anderledes så der ikke er Nans at se) Vi ser NaN fordi der nok er nogle taxa som er 0 i alle samples. Dvs. der er taxa tilstede i tabellen som ingen af samples har. Det kan fx være at disse taxa var tilstede i nogle af de andre projekter men nu er blevet filtreret fra. 
 
 Positiv log2 fold change betyder at taxonet er enriched hos T2D
 Negativ log2 fold change betyder at taxonet er enriched hos kontrol
@@ -1311,12 +1322,6 @@ The `rda_taxa` table ranks taxa by absolute loading magnitude.
 The biplot below shows samples, predictors and the top RDA1 taxa in the same constrained ordination space.
 ```{r}
 
-class(clr_meta$Host.age)
-clr_meta$Host.age <- as.numeric(as.character(clr_meta$Host.age))
-rda_disease_age <- rda(
-  clr_mat ~ Disease.MESH.ID + Host.age,
-  data = clr_meta
-)
 
 
 # Varians forklaret af RDA-akserne

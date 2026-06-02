@@ -137,16 +137,16 @@ wilcox_results %>%
   mutate(neg_log10_q = -log10(q_value),
          direction = case_when(q_value < 0.05 & log2_fc > 0 ~ "T2D-enriched",
                                q_value < 0.05 & log2_fc < 0 ~ "T2D-depleted",
-                               TRUE                         ~ "n.s.")) %>%
+                               TRUE                         ~ "Not significant")) %>%
   ggplot(aes(log2_fc, neg_log10_q, color = direction)) +
-    geom_point(alpha = 0.6, size = 1.8) +
+    geom_point(alpha = 0.6, size = 2) +
     scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
-                                  "T2D-depleted" = "#3498DB", "n.s." = "grey70")) +
+                                  "T2D-depleted" = "#3498DB", "Not significant" = "grey70")) +
     geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     theme_bw() +
     labs(x = "log2 fold change (T2D vs Healthy)", y = "-log10(q)", color = NULL,
-         title = "Wilcoxon: species-level disease effect")
+         title = "Wilcoxon: Differential abundance between Disease.MESH.ID groups")
 ```
 
 ```{r wilcox-bar, fig.width=8, fig.height=5}
@@ -185,16 +185,16 @@ glm_unadj %>%
   mutate(neg_log10_q = -log10(q_value),
          direction = case_when(q_value < 0.05 & estimate > 0 ~ "T2D-enriched",
                                q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
-                               TRUE                          ~ "n.s.")) %>%
+                               TRUE                          ~ "Not significant")) %>%
   ggplot(aes(estimate, neg_log10_q, color = direction)) +
-    geom_point(alpha = 0.6, size = 1.8) +
+    geom_point(alpha = 0.6, size = 2) +
     scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
-                                  "T2D-depleted" = "#3498DB", "n.s." = "grey70")) +
+                                  "T2D-depleted" = "#3498DB", "Not significant" = "grey70")) +
     geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     theme_bw() +
     labs(x = "GLM estimate (log10 RA, T2D vs Healthy)", y = "-log10(q)", color = NULL,
-         title = "GLM unadjusted")
+         title = "GLM unadjusted: Differential abundance between Disease.MESH.ID groups")
 ```
 
 # 8. GLM — adjusted for Sex
@@ -218,16 +218,16 @@ glm_sex %>%
   mutate(neg_log10_q = -log10(q_value),
          direction = case_when(q_value < 0.05 & estimate > 0 ~ "T2D-enriched",
                                q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
-                               TRUE                          ~ "n.s.")) %>%
+                               TRUE                          ~ "Not significant")) %>%
   ggplot(aes(estimate, neg_log10_q, color = direction)) +
-    geom_point(alpha = 0.6, size = 1.8) +
+    geom_point(alpha = 0.6, size = 2) +
     scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
-                                  "T2D-depleted" = "#3498DB", "n.s." = "grey70")) +
+                                  "T2D-depleted" = "#3498DB", "Not significant" = "grey70")) +
     geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     theme_bw() +
     labs(x = "GLM estimate (log10 RA, T2D vs Healthy)", y = "-log10(q)", color = NULL,
-         title = "GLM adjusted for Sex")
+         title = "GLM adjusted for Sex: Differential abundance between Disease.MESH.ID groups")
 ```
 
 # 9. GLM — adjusted for Age
@@ -251,16 +251,16 @@ glm_age %>%
   mutate(neg_log10_q = -log10(q_value),
          direction = case_when(q_value < 0.05 & estimate > 0 ~ "T2D-enriched",
                                q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
-                               TRUE                          ~ "n.s.")) %>%
+                               TRUE                          ~ "Not significant")) %>%
   ggplot(aes(estimate, neg_log10_q, color = direction)) +
     geom_point(alpha = 0.6, size = 1.8) +
     scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
-                                  "T2D-depleted" = "#3498DB", "n.s." = "grey70")) +
+                                  "T2D-depleted" = "#3498DB", "Not significant" = "grey70")) +
     geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     theme_bw() +
     labs(x = "GLM estimate (log10 RA, T2D vs Healthy)", y = "-log10(q)", color = NULL,
-         title = "GLM adjusted for Age")
+         title = "GLM adjusted for Age: Differential abundance between Disease.MESH.ID groups")
 ```
 
 # 10. GLM — adjusted for Sex + Age
@@ -284,16 +284,16 @@ glm_sexage %>%
   mutate(neg_log10_q = -log10(q_value),
          direction = case_when(q_value < 0.05 & estimate > 0 ~ "T2D-enriched",
                                q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
-                               TRUE                          ~ "n.s.")) %>%
+                               TRUE                          ~ "Not significant")) %>%
   ggplot(aes(estimate, neg_log10_q, color = direction)) +
     geom_point(alpha = 0.6, size = 1.8) +
     scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
-                                  "T2D-depleted" = "#3498DB", "n.s." = "grey70")) +
+                                  "T2D-depleted" = "#3498DB", "Not significant" = "grey70")) +
     geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     theme_bw() +
     labs(x = "GLM estimate (log10 RA, T2D vs Healthy)", y = "-log10(q)", color = NULL,
-         title = "GLM adjusted for Sex + Age")
+         title = "GLM adjusted for Sex + Age: Differential abundance between Disease.MESH.ID groups")
 ```
 
 # 11. CLR build
@@ -330,16 +330,16 @@ clr_unadj %>%
   mutate(neg_log10_q = -log10(q_value),
          direction = case_when(q_value < 0.05 & estimate > 0 ~ "T2D-enriched",
                                q_value < 0.05 & estimate < 0 ~ "T2D-depleted",
-                               TRUE                          ~ "n.s.")) %>%
+                               TRUE                          ~ "Not significant")) %>%
   ggplot(aes(estimate, neg_log10_q, color = direction)) +
     geom_point(alpha = 0.6, size = 1.8) +
     scale_color_manual(values = c("T2D-enriched" = "#E74C3C",
-                                  "T2D-depleted" = "#3498DB", "n.s." = "grey70")) +
+                                  "T2D-depleted" = "#3498DB", "Not significant" = "grey70")) +
     geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     theme_bw() +
     labs(x = "CLR estimate (T2D vs Healthy)", y = "-log10(q)", color = NULL,
-         title = "CLR unadjusted")
+         title = "CLR unadjusted: Differential abundance between Disease.MESH.ID groups")
 ```
 
 # 13. CLR — adjusted for Sex
