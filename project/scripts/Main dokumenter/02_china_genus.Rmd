@@ -123,6 +123,13 @@ On the samples with BMI metadata the p = 0.34 shows that BMI does not differ sig
 Does alpha diversity correlate with sequencing depth?
 ```{r depth-by-group}
 wilcox.test(Nr..reads.sequenced ~ Disease.MESH.ID, data = alpha_div)
+
+alpha_div |>
+  group_by(Disease) |>
+  summarise(median_reads = median(Nr..reads.sequenced),
+            IQR_reads    = IQR(Nr..reads.sequenced),
+            n            = dplyr::n(),
+            .groups = "drop")
 ```
 From this test we find that sequencing depth differs between the meshids. (p-value = 5.582e-05)
 
