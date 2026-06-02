@@ -12,7 +12,7 @@ library(vegan)
 
 
 ```{r}
-load("C:/Users/mai/OneDrive/Documents/Uni/Metagenomic Analyses of Microbiomes/Projekt/diabetes_t2_D003924/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+load("C:/Users/mai/OneDrive/Documents/Uni/Metagenomic Analyses of Microbiomes/Projekt/diabetes_t2_D003924/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
 
 ps <- pylsq #Viser et overblik over phyloseq-objektet.
 
@@ -142,6 +142,12 @@ plot_ordination(
   ord_bray,
   type = "samples",
   color = "Disease.MESH.ID"
+) +
+  geom_point(size = 1) +
+  stat_ellipse(
+    aes(group = Disease.MESH.ID),
+    level = 0.95
+  )
 )
 ```
 
