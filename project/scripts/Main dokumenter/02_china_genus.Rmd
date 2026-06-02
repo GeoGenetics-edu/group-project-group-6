@@ -99,7 +99,7 @@ alpha_div |>
     labs(x = NULL, y = "Host age", title = "Age by disease (Chinese cohort)")
 ```
 
-Lastly BMI — note it is missing for most samples, so this is only on the complete cases.
+Now BMI. It is missing for most samples, so this is only on the complete cases.
 ```{r meta-bmi}
 alpha_div |>
   mutate(BMI = as.numeric(BMI)) |>
@@ -112,7 +112,10 @@ alpha_div |>
 
 wilcox.test(as.numeric(BMI) ~ Disease.MESH.ID, data = alpha_div)
 ```
-~58% of BMI values are missing, and on the complete cases BMI does not differ between groups (p = 0.34). So BMI is not a confounder here, and is only used as a sensitivity covariate (n = 151) in file 3, not in the primary model.
+172 healthy - 74 has BMI metadata
+187 sick - 77 has BMI metadata
+
+On the samples with BMI metadata the p = 0.34 shows that BMI does not differ significantly between the groups.
 
 # 4. Sequencing depth
 
@@ -195,12 +198,16 @@ Let's test this. Frsit permanova, then betadisper.
 ```{r permanova}
 adonis2(bray_dist ~ Disease.MESH.ID, data = sample_df, permutations = 999)
 ```
+Permanova is significant, F=6.78 and p = 0.001. Healthy/sick differs in composition.
+Disease explains only 1.8% of community variation.
+
+Checking betadeisper
 
 ```{r betadisper}
 disp_disease <- betadisper(bray_dist, sample_df$Disease.MESH.ID)
 anova(disp_disease)
 ```
-
+Is it 
 ```{r betadisper-plot, fig.width=7, fig.height=5}
 plot(disp_disease, main = "Dispersion by disease")
 ```
