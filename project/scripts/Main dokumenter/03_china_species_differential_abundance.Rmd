@@ -509,17 +509,17 @@ meta_rda$Disease.MESH.ID <- factor(meta_rda$Disease.MESH.ID, levels = c("D006262
 meta_rda$Sex             <- factor(meta_rda$Sex)
 meta_rda$Host.age        <- as.numeric(meta_rda$Host.age)
 
-keep        <- complete.cases(meta_rda[, c("Disease.MESH.ID", "Sex", "Host.age")])
+keep        <- complete.cases(meta_rda[, c("Host.age","Sex", "Disease.MESH.ID")])
 clr_mat_rda <- clr_mat[keep, ]
 meta_rda    <- meta_rda[keep, ]
 
-rda_fit <- rda(clr_mat_rda ~ Disease.MESH.ID + Sex + Host.age, data = meta_rda)
+rda_fit <- rda(clr_mat_rda ~ Host.age + Sex + Disease.MESH.ID, data = meta_rda)
 rda_fit
 ```
 
 ```{r rda-anova}
 anova(rda_fit, permutations = 999)
-anova(rda_fit, by = "term", permutations = 999)
+anova(rda_fit, by = "margin", permutations = 999)
 ```
 
 ```{r rda-biplot, fig.width=8, fig.height=6}
@@ -549,7 +549,7 @@ ggplot(site, aes(RDA1, RDA2)) +
   theme_bw()
 ```
 
-The predictor biplot above shows the *direction* of the disease axis (T2D toward positive RDA1). The second axis (RDA2) captures almost no constrained variation, so a 2-D species overlay would spread taxa on a meaningless axis. Instead, the loadings on RDA1 alone are shown below for a set of taxa of interest, coloured by the disease state each associates with (the constrained variable): negative scores load toward the healthy side, positive scores toward T2D.
+The predictor biplot above shows the *direction* of the disease axis (T2D toward positive RDA1). The second axis (RDA2) captures almost no constrained variation, so a 2-D species overlay would spread taxa on a meaningless axis. Instead, the taxa that contribute most to the disease axis are shown below — the 15 species with the largest loadings on RDA1, selected by the ordination itself (not pre-chosen) — coloured by the disease state each associates with: negative scores load toward the healthy side, positive scores toward T2D.
 
 ```{r rda-species-guild, fig.width=7, fig.height=6}
 # per-taxon species scores (loadings) on the disease axis (RDA1)
@@ -558,25 +558,20 @@ sp_sc <- scores(rda_fit, display = "species", choices = 1) %>%
   rownames_to_column("taxon") %>%
   left_join(tax_clr %>% rownames_to_column("taxon"), by = "taxon")
 
-# taxa of interest to display
-taxa_show <- c("g__Roseburia", "g__Faecalibacterium", "g__Agathobacter",
-               "g__Butyrivibrio", "g__Butyrivibrio_A", "g__Anaerostipes",
-               "g__Coprococcus", "g__Eubacterium",
-               "g__Akkermansia", "g__Bifidobacterium", "g__Megasphaera", "g__Lactobacillus")
-
-sp_guild <- sp_sc %>%
-  filter(Genus %in% taxa_show) %>%
+# data-driven: the 15 taxa with the largest loadings on the disease axis
+sp_top <- sp_sc %>%
   mutate(direction = ifelse(RDA1 < 0, "Health-associated", "T2D-associated"),
-         label = make.unique(str_remove(Species, "^s__"), sep = " "))
+         label = make.unique(str_remove(Species, "^s__"), sep = " ")) %>%
+  slice_max(abs(RDA1), n = 15)
 
-ggplot(sp_guild, aes(RDA1, reorder(label, RDA1), color = direction)) +
+ggplot(sp_top, aes(RDA1, reorder(label, RDA1), color = direction)) +
   geom_vline(xintercept = 0, color = "grey50") +
   geom_segment(aes(x = 0, xend = RDA1, yend = label), linewidth = 0.5) +
   geom_point(size = 2.5) +
   scale_color_manual(values = c("Health-associated" = "#56B4E9",
                                 "T2D-associated"     = "#E74C3C")) +
-  labs(x = "RDA1 species score    (← Healthy        T2D →)", y = NULL, color = NULL,
-       title = "Where each taxon loads on the disease axis (RDA1)") +
+  labs(x = "RDA1 loading    (← Healthy        T2D →)", y = NULL, color = NULL,
+       title = "Top 15 taxa contributing to the disease axis (RDA1)") +
   theme_bw()
 ```
 

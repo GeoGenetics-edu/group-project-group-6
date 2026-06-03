@@ -494,7 +494,7 @@ ggplot(site, aes(RDA1, RDA2)) +
   theme_bw()
 ```
 
-The predictor biplot above shows the *direction* of the disease axis (T2D toward positive RDA1). The second axis (RDA2) captures almost no constrained variation, so a 2-D genus overlay would spread genera on a meaningless axis. Instead, the loadings on RDA1 alone are shown below for a set of genera of interest, coloured by the disease state each associates with (the constrained variable): negative scores load toward the healthy side, positive scores toward T2D.
+The predictor biplot above shows the *direction* of the disease axis (T2D toward positive RDA1). The second axis (RDA2) captures almost no constrained variation, so a 2-D genus overlay would spread genera on a meaningless axis. Instead, the genera that contribute most to the disease axis are shown below — the 15 genera with the largest loadings on RDA1, selected by the ordination itself (not pre-chosen) — coloured by the disease state each associates with: negative scores load toward the healthy side, positive scores toward T2D.
 
 ```{r rda-genus-guild, fig.width=7, fig.height=6}
 # per-taxon scores (loadings) on the disease axis (RDA1)
@@ -503,25 +503,20 @@ sp_sc <- scores(rda_fit, display = "species", choices = 1) %>%
   rownames_to_column("taxon") %>%
   left_join(tax_clr %>% rownames_to_column("taxon"), by = "taxon")
 
-# genera of interest to display
-taxa_show <- c("g__Roseburia", "g__Faecalibacterium", "g__Agathobacter",
-               "g__Butyrivibrio", "g__Butyrivibrio_A", "g__Anaerostipes",
-               "g__Coprococcus", "g__Eubacterium",
-               "g__Akkermansia", "g__Bifidobacterium", "g__Megasphaera", "g__Lactobacillus")
-
-sp_guild <- sp_sc %>%
-  filter(Genus %in% taxa_show) %>%
+# data-driven: the 15 genera with the largest loadings on the disease axis
+sp_top <- sp_sc %>%
   mutate(direction = ifelse(RDA1 < 0, "Health-associated", "T2D-associated"),
-         label = str_remove(Genus, "^g__"))
+         label = str_remove(Genus, "^g__")) %>%
+  slice_max(abs(RDA1), n = 15)
 
-ggplot(sp_guild, aes(RDA1, reorder(label, RDA1), color = direction)) +
+ggplot(sp_top, aes(RDA1, reorder(label, RDA1), color = direction)) +
   geom_vline(xintercept = 0, color = "grey50") +
   geom_segment(aes(x = 0, xend = RDA1, yend = label), linewidth = 0.5) +
   geom_point(size = 2.5) +
   scale_color_manual(values = c("Health-associated" = "#56B4E9",
                                 "T2D-associated"     = "#E74C3C")) +
-  labs(x = "RDA1 genus score    (← Healthy        T2D →)", y = NULL, color = NULL,
-       title = "Where each genus loads on the disease axis (RDA1)") +
+  labs(x = "RDA1 loading    (← Healthy        T2D →)", y = NULL, color = NULL,
+       title = "Top 15 genera contributing to the disease axis (RDA1)") +
   theme_bw()
 ```
 
