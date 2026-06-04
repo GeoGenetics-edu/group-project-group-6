@@ -88,9 +88,9 @@ head(alpha_div)
 
 
 Plotting the diversity
-```{r alpha-plot, fig.width=8, fig.height=4}
+```{r alpha-plot, fig.width=4, fig.height=4}
 alpha_div |>
-  pivot_longer(c(Shannon, Simpson), names_to = "metric", values_to = "value") |>
+  pivot_longer(c(Shannon), names_to = "metric", values_to = "value") |>
   ggplot(aes(x = Disease, y = value, fill = Disease)) +
     geom_boxplot(alpha = 0.7, outlier.shape = NA) +
     geom_jitter(width = 0.2, alpha = 0.3, size = 0.7) +
@@ -99,7 +99,7 @@ alpha_div |>
     theme_bw() +
     theme(legend.position = "none") +
     labs(x = NULL, y = "Alpha diversity",
-         title = "Alpha diversity by disease status (full data, genus level)")
+         title = "Alpha diversity by disease status ")
 ```
 A bit unexpected... T2D has higher alpha diversity than healthy? Let's investigate by doing a wilcoxon rank sum test to see if the difference in alpha diversity is significant...
 ```{r alpha-wilcox}
@@ -194,7 +194,7 @@ plot_richness(
                                 "PRJNA422434" = "purple"),
                      name = "Project") +
   theme_bw() +
-  labs(x = "Project", y = "Shannon",
+  labs(x = "Project", y = "Alpha diversity",
        title = "Shannon diversity by project (full data, genus)")
 ```
 This also might explain why T2D seems to have significantly higher alpha diversity! 
