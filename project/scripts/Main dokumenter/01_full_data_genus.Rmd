@@ -57,14 +57,14 @@ Somewhat balanced.
 Then, is the data balanced across ProjectID and Country?
 ```{r balance-project-country}
 table(sample_data(ps_genus)$Project.ID, useNA = "ifany")
-table(sample_data(ps_genus)$Country,    useNA = "ifany")
+table(sample_data(ps_genus)$Country, useNA = "ifany")
 ```
 No, not at all. Very few american samples, a few european samples and a lot of chinese samples.
 
 Then checking healthy/sick across the different ProjectIDs and Countries.
 ```{r balance-crosstabs}
 table(sample_data(ps_genus)$Project.ID, sample_data(ps_genus)$Disease.MESH.ID)
-table(sample_data(ps_genus)$Country,    sample_data(ps_genus)$Disease.MESH.ID)
+table(sample_data(ps_genus)$Country, sample_data(ps_genus)$Disease.MESH.ID)
 ```
 Not balanced at all. Only chinese healthy control???
 
