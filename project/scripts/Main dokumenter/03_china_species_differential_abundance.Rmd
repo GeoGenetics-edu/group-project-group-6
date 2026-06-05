@@ -1,5 +1,5 @@
 ---
-title: "3 — Chinese cohort (species level): differential abundance"
+title: "3 - Chinese cohort (species level): differential abundance"
 author: "Group 6"
 date: "`r Sys.Date()`"
 output:
@@ -60,7 +60,7 @@ dat_rel <- otu_rel %>%
 ps_genus10 <- tax_glom(ps_rel, taxrank = "Genus")
 top10_g    <- names(sort(taxa_sums(ps_genus10), decreasing = TRUE))[1:10]
 ps_g_top   <- prune_taxa(top10_g, ps_genus10)
-ps_g_disease <- merge_samples(ps_g_top, group = "Disease.MESH.ID") |>
+ps_g_disease <- merge_samples(ps_g_top, group = "Disease.MESH.ID") %>%
   transform_sample_counts(function(x) x / sum(x))
 
 plot_bar(ps_g_disease, fill = "Genus") +
@@ -73,7 +73,7 @@ plot_bar(ps_g_disease, fill = "Genus") +
 ```{r composition-species, fig.width=8, fig.height=5}
 top10_s      <- names(sort(taxa_sums(ps_rel), decreasing = TRUE))[1:10]
 ps_s_top     <- prune_taxa(top10_s, ps_rel)
-ps_s_disease <- merge_samples(ps_s_top, group = "Disease.MESH.ID") |>
+ps_s_disease <- merge_samples(ps_s_top, group = "Disease.MESH.ID") %>%
   transform_sample_counts(function(x) x / sum(x))
 
 plot_bar(ps_s_disease, fill = "Species") +
@@ -177,7 +177,7 @@ bind_rows(
     theme_bw()
 ```
 
-# 7. GLM — unadjusted
+# 7. GLM - unadjusted
 
 ```{r glm-unadj}
 glm_unadj <- dat_rel %>%
@@ -209,7 +209,7 @@ glm_unadj %>%
          title = "GLM unadjusted: Differential abundance between Disease.MESH.ID groups")
 ```
 
-# 8. GLM — adjusted for Sex
+# 8. GLM - adjusted for Sex
 
 ```{r glm-sex}
 glm_sex <- dat_rel %>%
@@ -242,7 +242,7 @@ glm_sex %>%
          title = "GLM adjusted for Sex: Differential abundance between Disease.MESH.ID groups")
 ```
 
-# 9. GLM — adjusted for Age
+# 9. GLM - adjusted for Age
 
 ```{r glm-age}
 glm_age <- dat_rel %>%
@@ -275,7 +275,7 @@ glm_age %>%
          title = "GLM adjusted for Age: Differential abundance between Disease.MESH.ID groups")
 ```
 
-# 10. GLM — adjusted for Sex + Age
+# 10. GLM - adjusted for Sex + Age
 
 ```{r glm-sexage}
 glm_sexage <- dat_rel %>%
@@ -351,7 +351,7 @@ dat_clr <- otu_clr %>%
   left_join(tax_clr  %>% rownames_to_column("taxon"),     by = "taxon")
 ```
 
-# 13. CLR — unadjusted
+# 13. CLR - unadjusted
 
 ```{r clr-unadj}
 clr_unadj <- dat_clr %>%
@@ -382,7 +382,7 @@ clr_unadj %>%
          title = "CLR unadjusted: Differential abundance between Disease.MESH.ID groups")
 ```
 
-# 14. CLR — adjusted for Sex
+# 14. CLR - adjusted for Sex
 
 ```{r clr-sex}
 clr_sex <- dat_clr %>%
@@ -414,7 +414,7 @@ clr_sex %>%
          title = "CLR adjusted for Sex: Differential abundance between Disease.MESH.ID groups")
 ```
 
-# 15. CLR — adjusted for Age
+# 15. CLR - adjusted for Age
 
 ```{r clr-age}
 clr_age <- dat_clr %>%
@@ -446,7 +446,7 @@ clr_age %>%
          title = "CLR adjusted for Age: Differential abundance between Disease.MESH.ID groups")
 ```
 
-# 16. CLR — adjusted for Sex + Age
+# 16. CLR - adjusted for Sex + Age
 
 ```{r clr-sexage}
 clr_sexage <- dat_clr %>%
@@ -545,11 +545,11 @@ ggplot(site, aes(RDA1, RDA2)) +
   scale_color_manual(values = c("Healthy" = "#56B4E9", "T2D" = "#E74C3C")) +
   labs(x = paste0("RDA1 (", pct[1], "%)"), y = paste0("RDA2 (", pct[2], "%)"),
        color = "Disease",
-       title = "RDA — species community constrained by disease, sex and age") +
+       title = "RDA - species community constrained by disease, sex and age") +
   theme_bw()
 ```
 
-The predictor biplot above shows the *direction* of the disease axis (T2D toward positive RDA1). The second axis (RDA2) captures almost no constrained variation, so a 2-D species overlay would spread taxa on a meaningless axis. Instead, the taxa that contribute most to the disease axis are shown below — the 15 species with the largest loadings on RDA1, selected by the ordination itself (not pre-chosen) — coloured by the disease state each associates with: negative scores load toward the healthy side, positive scores toward T2D.
+The predictor biplot above shows the *direction* of the disease axis (T2D toward positive RDA1). The second axis (RDA2) captures almost no constrained variation, so a 2-D species overlay would spread taxa on a meaningless axis. Instead, the taxa that contribute most to the disease axis are shown below - the 15 species with the largest loadings on RDA1, selected by the ordination itself (not pre-chosen) - coloured by the disease state each associates with: negative scores load toward the healthy side, positive scores toward T2D.
 
 ```{r rda-species-guild, fig.width=7, fig.height=6}
 # per-taxon species scores (loadings) on the disease axis (RDA1)
