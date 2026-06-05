@@ -95,7 +95,7 @@ dat_rel %>%
     stat_qq_line(color = "red", linetype = "dashed") +
     facet_wrap(~ Species, scales = "free") +
     labs(x = "Theoretical quantiles (normal)", y = "Sample quantiles",
-         title = "Q-Q plots: departures from normality") +
+         title = "Q-Q plots") +
     theme_bw()
 ```
 
