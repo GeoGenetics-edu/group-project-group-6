@@ -1,0 +1,219 @@
+---
+title: "1 - Full dataset (genus level): exploration, diversity and cohort structure"
+author: "Group 6"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# 1. Libraries
+
+```{r libraries}
+library(phyloseq)
+library(vegan)
+library(ggplot2)
+library(dplyr)
+library(tibble)
+library(tidyr)
+```
+
+# 2. Load and explore
+```{r load}
+load("project/data/D003924_Diabetes_Mellitus,_T/genus/D003924_phyloseq_updated_genus.RData")
+ps_genus <- pylsq
+rm(pylsq)
+
+ps_genus
+```
+
+```{r explore}
+rank_names(ps_genus)
+sample_variables(ps_genus)
+head(sample_data(ps_genus))
+```
+
+# 3. Balance
+```{r balance-disease}
+table(sample_data(ps_genus)$Disease.MESH.ID, useNA = "ifany")
+```
+```{r balance-project-country}
+table(sample_data(ps_genus)$Project.ID, useNA = "ifany")
+table(sample_data(ps_genus)$Country, useNA = "ifany")
+```
+
+```{r balance-crosstabs}
+table(sample_data(ps_genus)$Project.ID, sample_data(ps_genus)$Disease.MESH.ID)
+table(sample_data(ps_genus)$Country, sample_data(ps_genus)$Disease.MESH.ID)
+```
+
+```{r alpha-table}
+alpha <- estimate_richness(ps_genus, measures = c("Shannon")) %>%
+  rownames_to_column("sample_id")
+
+meta <- sample_data(ps_genus) %>%
+  data.frame() %>%
+  rownames_to_column("sample_id")
+
+alpha_div <- inner_join(alpha, meta, by = "sample_id") %>%
+  mutate(Disease = ifelse(Disease.MESH.ID == "D003924", "T2D", "Healthy"))
+
+head(alpha_div)
+```
+
+
+```{r alpha-plot, fig.width=4, fig.height=4}
+alpha_div %>%
+  pivot_longer(c(Shannon), names_to = "metric", values_to = "value") %>%
+  ggplot(aes(x = Disease, y = value, fill = Disease)) +
+    geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+    geom_jitter(width = 0.2, alpha = 0.3, size = 0.7) +
+    facet_wrap(~ metric, scales = "free_y") +
+    scale_fill_manual(values = c("Healthy" = "#56B4E9", "T2D" = "#E74C3C")) +
+    theme_bw() +
+    theme(legend.position = "none") +
+    labs(x = NULL, y = "Alpha diversity",
+         title = "Alpha diversity by disease status ")
+```
+
+```{r alpha-wilcox}
+wilcox.test(Shannon ~ Disease.MESH.ID, data = alpha_div)
+```
+
+```{r beta-dist}
+ps_rel    <- transform_sample_counts(ps_genus, function(x) x / sum(x))
+bray_dist <- distance(ps_rel, method = "bray")
+ord_bray  <- ordinate(ps_rel, method = "PCoA", distance = bray_dist)
+
+sample_df <- sample_data(ps_rel) %>% data.frame()
+```
+
+```{r pcoa-disease, fig.width=8, fig.height=5}
+plot_ordination(ps_rel, ord_bray, color = "Disease.MESH.ID") +
+  geom_point(size = 2, alpha = 0.7) +
+  stat_ellipse(level = 0.95) +
+  scale_color_manual(values = c("D006262" = "#56B4E9", "D003924" = "#E74C3C"),
+                     labels = c("D006262" = "Healthy", "D003924" = "T2D"),
+                     name   = "Disease") +
+  theme_bw() +
+  labs(title = "Bray–Curtis PCoA - disease (full data, genus)")
+```
+
+```{r pcoa-project, fig.width=8, fig.height=5}
+plot_ordination(ps_rel, ord_bray, color = "Project.ID") +
+  geom_point(size = 2, alpha = 0.7) +
+  stat_ellipse(level = 0.95) +
+  scale_color_manual(values = c("PRJEB1786"   = "orange",
+                                "PRJNA299502" = "forestgreen",
+                                "PRJNA422434" = "purple"),
+                     name = "Project") +
+  theme_bw() +
+  labs(title = "Bray–Curtis PCoA - project (full data, genus)")
+```
+
+```{r permanova}
+adonis2(bray_dist ~ Disease.MESH.ID, data = sample_df, permutations = 999)
+adonis2(bray_dist ~ Project.ID,      data = sample_df, permutations = 999)
+```
+
+```{r betadisper}
+disp_disease <- betadisper(bray_dist, sample_df$Disease.MESH.ID)
+anova(disp_disease)
+disp_project <- betadisper(bray_dist, sample_df$Project.ID)
+anova(disp_project)
+```
+
+```{r betadisper-plots, fig.width=7, fig.height=5}
+plot(disp_disease, main = "Dispersion by disease")
+plot(disp_project, main = "Dispersion by project")
+```
+
+# 6. Alpha diversity by project
+
+```{r alpha-by-project, fig.width=8, fig.height=5}
+plot_richness(
+  ps_genus,
+  x        = "Project.ID",
+  color    = "Project.ID",
+  measures = "Shannon"
+) +
+  geom_boxplot() +
+  scale_color_manual(values = c("PRJEB1786"   = "orange",
+                                "PRJNA299502" = "forestgreen",
+                                "PRJNA422434" = "purple"),
+                     name = "Project") +
+  theme_bw() +
+  labs(x = "Project", y = "Alpha diversity",
+       title = "Shannon diversity by project (full data, genus)")
+```
+
+```{r kruskal-project}
+kruskal.test(Shannon ~ Project.ID, data = alpha_div)
+```
+
+```{r pairwise-project}
+pairwise.wilcox.test(alpha_div$Shannon, alpha_div$Project.ID, p.adjust.method = "BH")
+```
+
+# Added after submission
+
+Alpha diversity across project ids. New plot where only sick from every cohort is in the data.
+```{r alpha-by-project-only-sick, fig.width=8, fig.height=5}
+alpha_div %>%
+  filter(Disease == "T2D") %>%
+  ggplot(aes(x = Project.ID, y = Shannon, color = Project.ID)) +
+    geom_boxplot() +
+    scale_color_manual(values = c("PRJEB1786"   = "orange",
+                                  "PRJNA299502" = "forestgreen",
+                                  "PRJNA422434" = "purple"),
+                       name = "Project") +
+    theme_bw() +
+    labs(x = "Project", y = "Alpha diversity",
+         title = "Shannon diversity by project (T2D individuals only)")
+```
+
+Testing whether the cohorts still differ in alpha diversity when only T2D individuals are kept.
+```{r kruskal-project-only-sick}
+sick <- alpha_div %>% filter(Disease == "T2D")
+kruskal.test(Shannon ~ Project.ID, data = sick)
+pairwise.wilcox.test(sick$Shannon, sick$Project.ID, p.adjust.method = "BH")
+```
+
+Same thing but for beta diversity: Bray–Curtis PCoA recomputed on T2D individuals only, coloured by project.
+```{r beta-dist-only-sick}
+ps_sick     <- subset_samples(ps_genus, Disease.MESH.ID == "D003924")
+ps_sick_rel <- transform_sample_counts(ps_sick, function(x) x / sum(x))
+bray_sick   <- distance(ps_sick_rel, method = "bray")
+ord_sick    <- ordinate(ps_sick_rel, method = "PCoA", distance = bray_sick)
+sample_sick <- sample_data(ps_sick_rel) %>% data.frame()
+```
+
+```{r pcoa-project-only-sick, fig.width=8, fig.height=5}
+plot_ordination(ps_sick_rel, ord_sick, color = "Project.ID") +
+  geom_point(size = 2, alpha = 0.7) +
+  stat_ellipse(level = 0.95) +
+  scale_color_manual(values = c("PRJEB1786"   = "orange",
+                                "PRJNA299502" = "forestgreen",
+                                "PRJNA422434" = "purple"),
+                     name = "Project") +
+  theme_bw() +
+  labs(title = "Bray–Curtis PCoA - project (T2D individuals only)")
+```
+
+Testing whether the cohorts still differ in composition when only T2D individuals are kept.
+```{r permanova-project-only-sick}
+adonis2(bray_sick ~ Project.ID, data = sample_sick, permutations = 999)
+disp_sick <- betadisper(bray_sick, sample_sick$Project.ID)
+anova(disp_sick)
+```
+```{r}
+plot(disp_sick, main = "Dispersion by disease")
+```
+

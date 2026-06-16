@@ -1,13 +1,13 @@
 # NBIB25004U — Metagenomics Analyses for Microbiomes 2026
 
-## Group _N_
+## Group 6
 
 | Member | KU-ID |
 |--------|-------|
-| _Name_ | _abc123_ |
-| _Name_ | _abc123_ |
-| _Name_ | _abc123_ |
-| _Name_ | _abc123_ |
+| Nataline Schlegel  | Jcr110 |
+| Mai Kammer Garde | lvb843 |
+| Emilie Cathrine Holst Lange | fsq839 |
+| Anton Sode Dam | zxn328 |
 
 ## Links
 

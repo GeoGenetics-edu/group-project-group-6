@@ -61,3 +61,5 @@ Thumbs.db
 # HPC logs
 slurm-*.out
 *.log
+.positai
+*.Rproj

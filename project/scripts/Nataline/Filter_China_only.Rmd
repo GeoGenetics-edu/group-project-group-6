@@ -1,0 +1,977 @@
+---
+title: "Filter_China_only"
+output: html_document
+---
+```{r}
+library(phyloseq)
+library(vegan)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(ggrepel)
+
+```
+the healthy control samples were represented by Chinese individuals, while the T2D samples came from several countries, country could act as a strong confounder. To reduce this bias, we performed a filtered analysis including only samples from China. This allowed us to compare healthy and T2D individuals within the same geographic background and test whether the observed alpha- and beta-diversity differences remained after controlling for country.
+
+```{r}
+load("/Users/natalineschlegel/Desktop/D003924_Diabetes_Mellitus,_T/genus/phyloseq.RData")
+
+pylsq_genus <- pylsq
+load("/Users/natalineschlegel/Desktop/D003924_Diabetes_Mellitus,_T/species/phyloseq.RData")
+pylsq_species <- pylsq
+ls()
+
+
+
+```
+
+```{r}
+# Filter to China only pylsq_species_china
+pylsq_species_china <- subset_samples(
+  pylsq,
+  Country == "China"
+)
+
+# Remove empty taxa after filtering
+pylsq_species_china <- prune_taxa(
+  taxa_sums(pylsq_species_china) > 0,
+pylsq_species_china
+)
+
+#China genus
+pylsq_genus_china <- subset_samples(
+  pylsq_genus,
+  Country == "China"
+)
+
+pylsq_genus_china <- prune_taxa(
+  taxa_sums(pylsq_genus_china) > 0,
+  pylsq_genus_china
+)
+
+```
+
+
+
+
+```{r}
+#Step 1 — Check zero-inflation
+otu_rel <- as(otu_table(pylsq_species_china), "matrix")
+
+if (taxa_are_rows(pylsq_species_china)) {
+  otu_rel <- t(otu_rel)
+}
+
+otu_rel <- as.data.frame(otu_rel)
+
+meta_rel <- as(sample_data(pylsq_species_china), "data.frame")
+tax_rel <- data.frame(tax_table(pylsq_species_china))
+
+dat_rel <- otu_rel %>%
+  rownames_to_column("sample_id") %>%
+  pivot_longer(
+    -sample_id,
+    names_to = "taxon",
+    values_to = "rel_abund"
+  ) %>%
+  left_join(
+    meta_rel %>% rownames_to_column("sample_id"),
+    by = "sample_id"
+  ) %>%
+  left_join(
+    tax_rel %>% rownames_to_column("taxon"),
+    by = "taxon"
+  )
+
+
+dat_rel %>%
+  group_by(taxon) %>%
+  summarise(
+    prop_zero = mean(rel_abund == 0),
+    .groups = "drop"
+  ) %>%
+  ggplot(aes(x = prop_zero)) +
+  geom_histogram(
+    binwidth = 0.05,
+    fill = "steelblue",
+    color = "white"
+  ) +
+  labs(
+    x = "Proportion of samples where abundance = 0",
+    y = "Number of species",
+    title = "Zero inflation in species-level data"
+  ) +
+  theme_bw()
+```
+```{r}
+#skewness
+set.seed(42)
+
+example_taxa <- dat_rel %>%
+  group_by(taxon, Genus, Species) %>%
+  summarise(
+    prop_nonzero = mean(rel_abund > 0),
+    .groups = "drop"
+  ) %>%
+  filter(
+    prop_nonzero > 0.4,
+    prop_nonzero < 0.9
+  ) %>%
+  slice_sample(n = 6) %>%
+  pull(taxon)
+
+dat_rel %>%
+  filter(
+    taxon %in% example_taxa,
+    rel_abund > 0
+  ) %>%
+  mutate(label = Species) %>%
+  ggplot(aes(x = rel_abund)) +
+  geom_histogram(
+    bins = 20,
+    fill = "steelblue",
+    color = "white"
+  ) +
+  facet_wrap(
+    ~ label,
+    scales = "free"
+  ) +
+  labs(
+    x = "Relative abundance",
+    y = "Count",
+    title = "Right-skewed distributions of selected species"
+  ) +
+  theme_bw()
+```
+
+
+
+
+
+```{r}
+# Alpha diversity plot
+plot_richness(
+  pylsq_genus_china,
+  x = "Disease.MESH.ID",
+  measures = c("Shannon", "Simpson"),
+  color = "Disease.MESH.ID"
+) +
+geom_boxplot(alpha = 0.3) +
+  scale_color_manual(
+  values = c(
+    "D003924" = "red",
+    "D006262" = "#0000ff"
+  ),
+  labels = c(
+    "D003924" = "T2D",
+    "D006262" = "Control"
+  )
+)
++ theme_classic()
+```
+
+```{r}
+#beta
+ord_china <- ordinate(
+  pylsq_genus_china,
+  method = "PCoA",
+  distance = "bray"
+)
+
+plot_ordination(
+  pylsq_genus_china,
+  ord_china,
+  type = "samples",
+  color = "Disease.MESH.ID"
+) +
+geom_point(size = 2, alpha = 0.8) +
+scale_color_manual(
+  values = c("D003924" = "red", "D006262" = "darkgreen"),
+  labels = c("Type 2 Diabetes", "Healthy")
+) +
+theme_classic()
+```
+```{r}
+#1. Lav en funktion du kan bruge på begge objekter Brug denne kode, men skift pylsq_genus og pylsq_species til de objektnavne, I har efter load().
+
+run_alpha <- function(ps, level_name) {
+  
+  otu <- as.data.frame(otu_table(ps))
+  
+  if (taxa_are_rows(ps)) {
+    otu <- t(otu)
+  }
+  
+  shannon <- diversity(otu, index = "shannon")
+  simpson <- diversity(otu, index = "simpson")
+  
+  metadata <- data.frame(sample_data(ps))
+  
+  alpha_df <- data.frame(
+    SampleID = rownames(otu),
+    Shannon = shannon,
+    Simpson = simpson,
+    Disease = metadata$Disease.MESH.ID,
+    Country = metadata$Country,
+    Level = level_name
+  )
+  
+  print(level_name)
+  
+  print(
+    wilcox.test(
+      Shannon ~ Disease,
+      data = alpha_df
+    )
+  )
+  
+  print(
+    wilcox.test(
+      Simpson ~ Disease,
+      data = alpha_df
+    )
+  )
+  
+  p <- ggplot(alpha_df, aes(x = Disease, y = Shannon, color = Disease)) +
+    geom_boxplot(alpha = 0.3) +
+    geom_jitter(width = 0.15, alpha = 0.7) +
+    scale_color_manual(
+      values = c("D003924" = "red", "D006262" = "blue"),
+      labels = c("Type 2 Diabetes", "Healthy")
+    ) +
+    labs(
+      title = paste("Alpha diversity -", level_name),
+      x = "Disease status",
+      y = "Shannon diversity",
+      color = "Disease"
+    ) +
+    theme_classic()
+  
+  print(p)
+  
+  return(alpha_df)
+}
+```
+
+
+Hvorfor ligner plotsene hinanden?
+Fordi:
+•	T2D-signalet findes på begge niveauer 
+•	sygdommen ændrer ikke kun enkelte arter 
+•	men også større bakteriegrupper 
+Det er faktisk biologisk plausibelt.
+
+
+```{r}
+alpha_genus <- run_alpha(pylsq_genus, "Genus level")
+
+alpha_species <- run_alpha(pylsq_species, "Species level")
+
+alpha_species_china <- run_alpha(
+  pylsq_species_china,
+  "Species level - China only")
+
+
+alpha_genus_china <- run_alpha(
+  pylsq_genus_china,
+  "Genus level - China only"
+)
+```
+Species-level plottet Ser mere ens ud mellem T2D og Healthy. Det betyder: de har cirka samme samlede antal arter og samme overordnede kompleksitet. Altså: microbiomet er ikke kollapset raske og T2D har stadig mange bakterier Genus-level plottet Her bliver forskellen tydeligere. Det betyder: de store bakteriegrupper fordeler sig anderledes hos diabetikere.
+
+
+
+I bør sandsynligvis køre species-level på China-only datasættet først.
+
+```{r}
+#BETA 
+# Brug China-only genus objekt
+ps <- pylsq_genus_china
+
+# PCoA Bray-Curtis
+ord <- ordinate(
+  ps,
+  method = "PCoA",
+  distance = "bray"
+)
+
+plot_ordination(
+  ps,
+  ord,
+  type = "samples",
+  color = "Disease.MESH.ID"
+) +
+  geom_point(size = 2, alpha = 0.8) +
+  scale_color_manual(
+    values = c("D003924" = "red", "D006262" = "darkgreen"),
+    labels = c("Type 2 Diabetes", "Healthy")
+  ) +
+  labs(
+    title = "Bray-Curtis PCoA - Genus level, China only",
+    color = "Disease"
+  ) +
+  theme_classic()
+
+```
+
+```{r}
+# NMDS på China-only genus data
+
+```
+
+om diabetes alene påvirker microbiomet,
+uden country-confounding.
+
+
+```{r}
+#2. PERMANOVA på China-only
+otu <- as.data.frame(otu_table(pylsq_genus_china))
+
+if (taxa_are_rows(pylsq_genus_china)) {
+  otu <- t(otu)
+}
+
+metadata <- data.frame(sample_data(pylsq_genus_china))
+metadata <- metadata[rownames(otu), ]
+
+bray_dist <- vegdist(otu, method = "bray")
+
+adonis2(
+  bray_dist ~ Disease.MESH.ID,
+  data = metadata,
+  permutations = 999
+)
+```
+PERMANOVA
+p = 0.001
+R² = 0.0115
+p = 0.001
+F = 4.165
+Grupperne er mere forskellige end forventet tilfældigt
+
+Der er stadig en statistisk signifikant forskel mellem:
+kinesiske T2D-patienter
+kinesiske raske i deres samlede microbiome-sammensætning.
+Altså: selvom alpha-diversiteten ikke var signifikant på species-niveau,
+er selve sammensætningen af bakterier stadig forskellig
+
+R² = 0.0115 Det betyder: =1.15% Kun ca. 1% af variationen forklares af T2D.
+
+Alpha diversity Species-level forskellen forsvinder efter China-filter. → T2D giver ikke et generelt kollaps i artsrigdom. Beta diversity PERMANOVA er stadig signifikant. → Sammensætningen af bakterier er stadig forskellig. Altså: T2D-patienter har ikke nødvendigvis færre bakterier, men andre bakterier.
+
+
+
+```{r}
+#3. Tjek betadisper
+
+disp <- betadisper(
+  bray_dist,
+  metadata$Disease.MESH.ID
+)
+
+anova(disp)
+plot(disp)
+```
+
+p=0.0055 så er: p<0.05
+→ derfor er forskellen i dispersion signifikant.
+
+Det betyder: T2D- og Healthy-grupperne har ikke samme spredning i mikrobiomet.
+
+Man kan ikke være 100% sikker på, om PERMANOVA-signifikansen skyldes et ægte biologisk skift eller bare større variation i T2D-gruppen = Fortolk PERMANOVA forsigtigt fordi en del af forskellen skyldes muligvis større variation i T2D-gruppen
+
+```{r}
+otu_genus <- as.data.frame(otu_table(pylsq_genus_china))
+
+if (taxa_are_rows(pylsq_genus_china)) {
+  otu_genus <- t(otu_genus)
+}
+
+meta_genus <- data.frame(sample_data(pylsq_genus_china))
+meta_genus <- meta_genus[rownames(otu_genus), ]
+
+tax <- data.frame(tax_table(pylsq_genus_china))
+
+results <- data.frame()
+
+for (taxon in colnames(otu_genus)) {
+  
+  df <- data.frame(
+    abundance = otu_genus[, taxon],
+    disease = meta_genus$Disease.MESH.ID
+  )
+  
+  test <- wilcox.test(abundance ~ disease, data = df)
+  
+  mean_T2D <- mean(df$abundance[df$disease == "D003924"], na.rm = TRUE)
+  mean_Healthy <- mean(df$abundance[df$disease == "D006262"], na.rm = TRUE)
+  
+  results <- rbind(
+    results,
+    data.frame(
+      Taxon = taxon,
+      Genus = tax[taxon, "Genus"],
+      p_value = test$p.value,
+      mean_T2D = mean_T2D,
+      mean_Healthy = mean_Healthy,
+      direction = ifelse(mean_T2D > mean_Healthy, "Higher in T2D", "Higher in Healthy")
+    )
+  )
+}
+
+results$q_value <- p.adjust(results$p_value, method = "BH")
+
+results_sorted <- results[order(results$q_value), ]
+
+head(results_sorted, 20)
+```
+
+```{r}
+top_taxa <- head(results_sorted$Taxon, 10)
+
+otu_long <- data.frame(
+  SampleID = rep(rownames(otu_genus), length(top_taxa)),
+  Taxon = rep(top_taxa, each = nrow(otu_genus)),
+  Abundance = as.vector(as.matrix(otu_genus[, top_taxa])),
+  Disease = rep(meta_genus$Disease.MESH.ID, length(top_taxa))
+)
+
+ggplot(otu_long, aes(x = Disease, y = Abundance, color = Disease)) +
+  geom_boxplot(alpha = 0.3) +
+  geom_jitter(width = 0.15, alpha = 0.6) +
+  facet_wrap(~ Taxon, scales = "free_y") +
+  scale_color_manual(
+    values = c("D003924" = "red", "D006262" = "darkgreen"),
+    labels = c("Type 2 Diabetes", "Healthy")
+  ) +
+  labs(
+    title = "Top genera differing between Chinese T2D and Healthy samples",
+    x = "Disease status",
+    y = "Relative abundance",
+    color = "Disease"
+  ) +
+  theme_classic()
+```
+1. Differential abundance: Wilcoxon + FDR
+
+```{r}
+# Genus China-only
+otu_genus <- as.data.frame(otu_table(pylsq_genus_china))
+
+if (taxa_are_rows(pylsq_genus_china)) {
+  otu_genus <- t(otu_genus)
+}
+meta_genus <- data.frame(sample_data(pylsq_genus_china))
+tax <- data.frame(tax_table(pylsq_genus_china))
+
+tax <- data.frame(tax_table(pylsq_genus_china))
+
+results <- data.frame()
+
+for (taxon in colnames(otu_genus)) {
+  
+  df <- data.frame(
+    abundance = otu_genus[, taxon],
+    disease = meta_genus$Disease.MESH.ID
+  )
+  
+  test <- wilcox.test(abundance ~ disease, data = df)
+  
+  mean_T2D <- mean(df$abundance[df$disease == "D003924"], na.rm = TRUE)
+  mean_Healthy <- mean(df$abundance[df$disease == "D006262"], na.rm = TRUE)
+  
+  results <- rbind(results, data.frame(
+    Taxon = taxon,
+    Genus = tax[taxon, "Genus"],
+    p_value = test$p.value,
+    mean_T2D = mean_T2D,
+    mean_Healthy = mean_Healthy,
+    direction = ifelse(mean_T2D > mean_Healthy, "Higher in T2D", "Higher in Healthy")
+  ))
+}
+
+results$q_value <- p.adjust(results$p_value, method = "BH")
+results_sorted <- results[order(results$q_value), ]
+
+sig_taxa <- subset(results_sorted, q_value < 0.05)
+sig_taxa
+```
+2. CLR + lineær model
+```{r}
+library(compositions)
+
+# Lille pseudocount, fordi CLR ikke kan håndtere 0
+otu_clr <- clr(otu_genus + 1e-6)
+otu_clr <- as.data.frame(otu_clr)
+
+clr_results <- data.frame()
+
+for (taxon in colnames(otu_clr)) {
+  
+  df <- data.frame(
+    clr_abundance = otu_clr[, taxon],
+    Disease = meta_genus$Disease.MESH.ID,
+    Sex = meta_genus$Sex,
+    BMI = meta_genus$BMI
+  )
+  
+  model <- lm(clr_abundance ~ Disease, data = df)
+  sm <- summary(model)
+  
+  pval <- coef(sm)[2, "Pr(>|t|)"]
+  
+  clr_results <- rbind(clr_results, data.frame(
+    Taxon = taxon,
+    Genus = tax[taxon, "Genus"],
+    p_value = pval
+  ))
+}
+
+clr_results$q_value <- p.adjust(clr_results$p_value, method = "BH")
+clr_results <- clr_results[order(clr_results$q_value), ]
+
+head(clr_results, 20)
+```
+```{r}
+model <- lm(clr_abundance ~ Disease + Sex + BMI, data = df)
+```
+
+3. RDA på CLR-data
+
+```{r}
+
+
+rda_model <- rda(
+  otu_clr ~ Disease.MESH.ID,
+  data = meta_genus
+)
+
+anova(rda_model, permutations = 999)
+
+plot(rda_model)
+```
+
+4. Find taxa med størst RDA-loadings
+
+```{r}
+species_scores <- scores(rda_model, display = "species")
+
+rda_drivers <- data.frame(
+  Taxon = rownames(species_scores),
+  RDA1_loading = species_scores[,1]
+)
+
+rda_drivers <- rda_drivers[order(abs(rda_drivers$RDA1_loading), decreasing = TRUE), ]
+
+head(rda_drivers, 20)
+```
+
+
+```{r}
+#T2D vs Healthy GLM
+
+glm_t2d_results <- data.frame()
+
+for(taxon in colnames(otu_genus)) {
+  
+  df <- data.frame(
+    abundance = otu_genus[, taxon],
+    disease = meta_genus$Disease.MESH.ID
+  )
+  
+  fit <- lm(
+    log10(abundance + 1e-6) ~ disease,
+    data = df
+  )
+  
+  glm_t2d_results <- rbind(
+    glm_t2d_results,
+    data.frame(
+      taxon = taxon,
+      genus = tax[taxon, "Genus"],
+      estimate = coef(summary(fit))[2, 1],
+      std.error = coef(summary(fit))[2, 2],
+      statistic = coef(summary(fit))[2, 3],
+      p.value = coef(summary(fit))[2, 4]
+    )
+  )
+}
+
+#v√Top taxa højere i T2D
+glm_t2d_enriched <- glm_t2d_results %>%
+  arrange(desc(estimate)) %>%
+  head(10)
+
+glm_t2d_enriched
+
+#Top taxa højere i Healthy
+
+#op taxa højere i Healthy
+glm_healthy_enriched <- glm_t2d_results %>%
+ arrange(estimate) %>%
+head(10)
+
+```
+
+```{r}
+#Volcano plot
+
+
+```
+
+
+```{r}
+# ------------------------------------------------------------
+# Prepare species abundance table + metadata + taxonomy
+# ------------------------------------------------------------
+
+otu_species <- as.data.frame(otu_table(pylsq_species_china))
+
+if (taxa_are_rows(pylsq_species_china)) {
+  otu_species <- t(otu_species)
+}
+
+otu_species <- as.data.frame(otu_species)
+
+meta_species <- data.frame(sample_data(pylsq_species_china))
+meta_species <- meta_species[rownames(otu_species), ]
+
+tax_species <- data.frame(tax_table(pylsq_species_china))
+
+meta_species$Disease.MESH.ID <- factor(
+  meta_species$Disease.MESH.ID,
+  levels = c("D006262", "D003924")
+)
+
+# D006262 = Healthy reference
+# D003924 = Type 2 Diabetes
+
+
+# ------------------------------------------------------------
+# 1. Differential abundance: Wilcoxon + FDR
+# ------------------------------------------------------------
+
+wilcox_species_results <- data.frame()
+
+for (taxon in colnames(otu_species)) {
+  
+  df <- data.frame(
+    abundance = otu_species[, taxon],
+    disease = meta_species$Disease.MESH.ID
+  )
+  
+  test <- wilcox.test(abundance ~ disease, data = df, exact = FALSE)
+  
+  mean_healthy <- mean(df$abundance[df$disease == "D006262"], na.rm = TRUE)
+  mean_t2d <- mean(df$abundance[df$disease == "D003924"], na.rm = TRUE)
+  
+  wilcox_species_results <- rbind(
+    wilcox_species_results,
+    data.frame(
+      taxon = taxon,
+      genus = tax_species[taxon, "Genus"],
+      species = tax_species[taxon, "Species"],
+      p_value = test$p.value,
+      mean_healthy = mean_healthy,
+      mean_t2d = mean_t2d,
+      log2_fc = log2((mean_t2d + 1e-6) / (mean_healthy + 1e-6))
+    )
+  )
+}
+
+wilcox_species_results <- wilcox_species_results %>%
+  mutate(
+    q_value = p.adjust(p_value, method = "BH"),
+    neg_log10_q = -log10(q_value),
+    direction = case_when(
+      q_value < 0.05 & log2_fc > 0 ~ "Higher in T2D",
+      q_value < 0.05 & log2_fc < 0 ~ "Higher in Healthy",
+      TRUE ~ "Not significant"
+    )
+  ) %>%
+  arrange(q_value)
+
+head(wilcox_species_results, 20)
+
+
+# ------------------------------------------------------------
+# Volcano plot: Wilcoxon species-level
+# ------------------------------------------------------------
+
+ggplot(wilcox_species_results,
+       aes(x = log2_fc,
+           y = neg_log10_q,
+           color = direction)) +
+  geom_point(alpha = 0.7, size = 2.5) +
+  geom_hline(yintercept = -log10(0.05),
+             linetype = "dashed",
+             color = "grey40") +
+  geom_vline(xintercept = 0,
+             linetype = "dashed",
+             color = "grey40") +
+  scale_color_manual(
+    values = c(
+      "Higher in T2D" = "#E74C3C",
+      "Higher in Healthy" = "#3498DB",
+      "Not significant" = "grey70"
+    )
+  ) +
+  labs(
+    title = "Wilcoxon differential abundance",
+    subtitle = "Species-level, China-only: Type 2 Diabetes vs Healthy",
+    x = "log2 fold change: T2D / Healthy",
+    y = "-log10(q-value)",
+    color = NULL
+  ) +
+  theme_bw()
+
+
+# ------------------------------------------------------------
+# 2. Differential abundance: GLM + FDR
+# ------------------------------------------------------------
+
+glm_species_results <- data.frame()
+
+for (taxon in colnames(otu_species)) {
+  
+  df <- data.frame(
+    abundance = otu_species[, taxon],
+    disease = meta_species$Disease.MESH.ID
+  )
+  
+  fit <- glm(
+    log10(abundance + 1e-6) ~ disease,
+    data = df,
+    family = gaussian()
+  )
+  
+  sm <- summary(fit)
+  
+  glm_species_results <- rbind(
+    glm_species_results,
+    data.frame(
+      taxon = taxon,
+      genus = tax_species[taxon, "Genus"],
+      species = tax_species[taxon, "Species"],
+      estimate = coef(sm)[2, "Estimate"],
+      std_error = coef(sm)[2, "Std. Error"],
+      statistic = coef(sm)[2, "t value"],
+      p_value = coef(sm)[2, "Pr(>|t|)"]
+    )
+  )
+}
+
+glm_species_results <- glm_species_results %>%
+  mutate(
+    q_value = p.adjust(p_value, method = "BH"),
+    neg_log10_q = -log10(q_value),
+    fold_change_t2d_vs_healthy = 10^estimate,
+    direction = case_when(
+      q_value < 0.05 & estimate > 0 ~ "Higher in T2D",
+      q_value < 0.05 & estimate < 0 ~ "Higher in Healthy",
+      TRUE ~ "Not significant"
+    )
+  ) %>%
+  arrange(q_value)
+
+head(glm_species_results, 20)
+
+
+# ------------------------------------------------------------
+# Volcano plot: GLM species-level
+# ------------------------------------------------------------
+
+ggplot(glm_species_results,
+       aes(x = estimate,
+           y = neg_log10_q,
+           color = direction)) +
+  geom_point(alpha = 0.7, size = 2.5) +
+  geom_hline(yintercept = -log10(0.05),
+             linetype = "dashed",
+             color = "grey40") +
+  geom_vline(xintercept = 0,
+             linetype = "dashed",
+             color = "grey40") +
+  scale_color_manual(
+    values = c(
+      "Higher in T2D" = "#E74C3C",
+      "Higher in Healthy" = "#3498DB",
+      "Not significant" = "grey70"
+    )
+  ) +
+  labs(
+    title = "GLM differential abundance",
+    subtitle = "Species-level, China-only: Type 2 Diabetes vs Healthy",
+    x = "GLM estimate: log10 abundance, T2D vs Healthy",
+    y = "-log10(q-value)",
+    color = NULL
+  ) +
+  theme_bw()
+```
+```{r}
+# Significance heatmap with directionality:
+# signed -log10(q) across all methods for species significant in at least one method
+colnames(comparison_results)
+
+heatmap_data <- comparison_results %>%
+  filter(
+    wilcox_q < 0.05 |
+    glm_q < 0.05 |
+    glm_adj_q < 0.05 |
+    clr_q < 0.05
+  ) %>%
+  mutate(label = Species)
+  select(
+    label,
+    wilcox_q, glm_q, glm_adj_q, clr_q,
+    wilcox_log2fc, glm_estimate, glm_adj_estimate, clr_estimate
+  ) %>%
+  pivot_longer(
+    cols = c(wilcox_q, glm_q, glm_adj_q, clr_q),
+    names_to = "method",
+    values_to = "q_value"
+  ) %>%
+  mutate(
+    direction = case_when(
+      method == "wilcox_q"  ~ wilcox_log2fc,
+      method == "glm_q"     ~ glm_estimate,
+      method == "glm_adj_q" ~ glm_adj_estimate,
+      method == "clr_q"     ~ clr_estimate
+    ),
+    signed_neg_log10_q = sign(direction) * pmin(-log10(q_value), 10),
+    method = factor(
+      method,
+      levels = c("wilcox_q", "glm_q", "glm_adj_q", "clr_q"),
+      labels = c("Wilcoxon", "GLM", "GLM adjusted", "CLR")
+    )
+  )
+
+taxon_order <- heatmap_data %>%
+  group_by(label) %>%
+  summarise(
+    mean_signed = mean(signed_neg_log10_q, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(mean_signed) %>%
+  pull(label)
+
+heatmap_data %>%
+  mutate(label = factor(label, levels = taxon_order)) %>%
+  ggplot(aes(x = method, y = label, fill = signed_neg_log10_q)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(
+    aes(label = ifelse(q_value < 0.05, "*", "")),
+    color = "black",
+    size = 3
+  ) +
+  scale_fill_gradient2(
+    low = "#3498DB",
+    mid = "white",
+    high = "#C0392B",
+    midpoint = 0,
+    limits = c(-10, 10),
+    name = "Signed\n-log10(q)",
+    breaks = c(-10, -5, 0, 5, 10),
+    labels = c("-10\n(non-T2D)", "-5", "0", "5", "10\n(T2D)")
+  ) +
+  labs(
+    x = "Method",
+    y = "Species",
+    title = "Significance and directionality across methods at species level",
+    subtitle = "q < 0.05 marked with *; Blue = non-T2D enriched, Red = T2D enriched"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.y = element_text(size = 7),
+    axis.text.x = element_text(size = 10),
+    plot.title = element_text(face = "bold")
+  )
+```
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Heatmap: significance + directionality for T2D at species level
+
+heatmap_data <- comparison_results %>%
+  filter(
+    wilcox_q < 0.05 |
+    glm_q < 0.05 |
+    glm_adj_q < 0.05 |
+    clr_q < 0.05
+  ) %>%
+  mutate(
+    label = paste(Genus, Species)
+  ) %>%
+  select(
+    label,
+    wilcox_q, glm_q, glm_adj_q, clr_q,
+    wilcox_log2fc, glm_estimate, glm_adj_estimate, clr_estimate
+  ) %>%
+  pivot_longer(
+    cols = c(wilcox_q, glm_q, glm_adj_q, clr_q),
+    names_to = "method",
+    values_to = "q_value"
+  ) %>%
+  mutate(
+    direction = case_when(
+      method == "wilcox_q" ~ wilcox_log2fc,
+      method == "glm_q" ~ glm_estimate,
+      method == "glm_adj_q" ~ glm_adj_estimate,
+      method == "clr_q" ~ clr_estimate
+    ),
+    signed_neg_log10_q = sign(direction) * pmin(-log10(q_value), 10),
+    method = factor(
+      method,
+      levels = c("wilcox_q", "glm_q", "glm_adj_q", "clr_q"),
+      labels = c("Wilcoxon", "GLM", "GLM adjusted", "CLR")
+    )
+  )
+
+taxon_order <- heatmap_data %>%
+  group_by(label) %>%
+  summarise(
+    mean_signed = mean(signed_neg_log10_q, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(mean_signed) %>%
+  pull(label)
+
+heatmap_data %>%
+  mutate(label = factor(label, levels = taxon_order)) %>%
+  ggplot(aes(x = method, y = label, fill = signed_neg_log10_q)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(
+    aes(label = ifelse(q_value < 0.05, "*", "")),
+    color = "black",
+    size = 3
+  ) +
+  scale_fill_gradient2(
+    low = "#3498DB",
+    mid = "white",
+    high = "#C0392B",
+    midpoint = 0,
+    limits = c(-10, 10),
+    name = "Signed\n-log10(q)",
+    breaks = c(-10, -5, 0, 5, 10),
+    labels = c("-10\n(non-T2D)", "-5", "0", "5", "10\n(T2D)")
+  ) +
+  labs(
+    x = "Method",
+    y = "Species",
+    title = "Significance and directionality across methods at species level",
+    subtitle = "q < 0.05 marked with *; Blue = non-T2D enriched, Red = T2D enriched"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.y = element_text(size = 7),
+    axis.text.x = element_text(size = 10),
+    plot.title = element_text(face = "bold")
+  )
+```
+
+
+
