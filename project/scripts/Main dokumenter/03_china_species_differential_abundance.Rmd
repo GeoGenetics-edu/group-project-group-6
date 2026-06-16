@@ -691,3 +691,28 @@ pa_all <- dat_rel %>%
 pa_all
 ```
 
+The mapping percentage (the share of a sample's reads assigned to any reference) is discarded when relative abundances are re-closed to sum to 1. It is recovered here as each sample's total before re-closing, and tested between groups, since a difference in mapping success could itself influence the presence/absence results above.
+```{r mapping-fraction-by-disease, fig.width=4, fig.height=4}
+map_frac <- data.frame(
+  mapped  = sample_sums(ps),
+  Disease = ifelse(sample_data(ps)$Disease.MESH.ID == "D003924", "T2D", "Healthy"))
+
+map_frac %>%
+  group_by(Disease) %>%
+  summarise(median_mapped = median(mapped),
+            IQR_mapped     = IQR(mapped),
+            n              = dplyr::n(),
+            .groups = "drop")
+
+wilcox.test(mapped ~ Disease, data = map_frac)
+
+ggplot(map_frac, aes(x = Disease, y = mapped, fill = Disease)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.3, size = 0.7) +
+  scale_fill_manual(values = c("Healthy" = "#56B4E9", "T2D" = "#E74C3C")) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  labs(x = NULL, y = "Mapped fraction (sample sum before re-closing)",
+       title = "Mapping percentage by disease group")
+```
+
