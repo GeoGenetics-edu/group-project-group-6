@@ -162,3 +162,58 @@ kruskal.test(Shannon ~ Project.ID, data = alpha_div)
 pairwise.wilcox.test(alpha_div$Shannon, alpha_div$Project.ID, p.adjust.method = "BH")
 ```
 
+# Added after submission
+
+Alpha diversity across project ids. New plot where only sick from every cohort is in the data.
+```{r alpha-by-project-only-sick, fig.width=8, fig.height=5}
+alpha_div %>%
+  filter(Disease == "T2D") %>%
+  ggplot(aes(x = Project.ID, y = Shannon, color = Project.ID)) +
+    geom_boxplot() +
+    scale_color_manual(values = c("PRJEB1786"   = "orange",
+                                  "PRJNA299502" = "forestgreen",
+                                  "PRJNA422434" = "purple"),
+                       name = "Project") +
+    theme_bw() +
+    labs(x = "Project", y = "Alpha diversity",
+         title = "Shannon diversity by project (T2D individuals only)")
+```
+
+Testing whether the cohorts still differ in alpha diversity when only T2D individuals are kept.
+```{r kruskal-project-only-sick}
+sick <- alpha_div %>% filter(Disease == "T2D")
+kruskal.test(Shannon ~ Project.ID, data = sick)
+pairwise.wilcox.test(sick$Shannon, sick$Project.ID, p.adjust.method = "BH")
+```
+
+Same thing but for beta diversity: Bray–Curtis PCoA recomputed on T2D individuals only, coloured by project.
+```{r beta-dist-only-sick}
+ps_sick     <- subset_samples(ps_genus, Disease.MESH.ID == "D003924")
+ps_sick_rel <- transform_sample_counts(ps_sick, function(x) x / sum(x))
+bray_sick   <- distance(ps_sick_rel, method = "bray")
+ord_sick    <- ordinate(ps_sick_rel, method = "PCoA", distance = bray_sick)
+sample_sick <- sample_data(ps_sick_rel) %>% data.frame()
+```
+
+```{r pcoa-project-only-sick, fig.width=8, fig.height=5}
+plot_ordination(ps_sick_rel, ord_sick, color = "Project.ID") +
+  geom_point(size = 2, alpha = 0.7) +
+  stat_ellipse(level = 0.95) +
+  scale_color_manual(values = c("PRJEB1786"   = "orange",
+                                "PRJNA299502" = "forestgreen",
+                                "PRJNA422434" = "purple"),
+                     name = "Project") +
+  theme_bw() +
+  labs(title = "Bray–Curtis PCoA - project (T2D individuals only)")
+```
+
+Testing whether the cohorts still differ in composition when only T2D individuals are kept.
+```{r permanova-project-only-sick}
+adonis2(bray_sick ~ Project.ID, data = sample_sick, permutations = 999)
+disp_sick <- betadisper(bray_sick, sample_sick$Project.ID)
+anova(disp_sick)
+```
+```{r}
+plot(disp_sick, main = "Dispersion by disease")
+```
+

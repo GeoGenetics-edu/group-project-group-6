@@ -614,3 +614,80 @@ all_tests %>%
     theme_bw() +
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
+# Added after submission
+
+```{r exploring the differentially abundant taxa across covariates}
+roseburia <- dat_rel %>%
+  filter(str_detect(Species, "Roseburia intestinalis")) %>%
+  pull(taxon) %>%
+  unique()
+
+ros_dat <- dat_rel %>% filter(str_detect(Species, "Roseburia intestinalis"))
+
+```
+
+Abundance of Roseburia intestinalis among samples where it is present (zeros removed), with a Wilcoxon test of whether the level differs when present.
+```{r ros-abundance-when-present}
+wilcox.test(rel_abund ~ Disease.MESH.ID, data = filter(ros_dat, rel_abund > 0))
+
+ros_dat %>%
+  filter(rel_abund > 0) %>%
+  ggplot(aes(x = Disease.MESH.ID, y = rel_abund, fill = Disease.MESH.ID)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(width = 0.15, alpha = 0.5) +
+    theme_bw() +
+    labs(x = NULL, y = "Relative abundance (present samples only)",
+         title = "Roseburia intestinalis abundance when present")
+```
+
+```{r}
+dat_rel %>%
+  filter(str_detect(Species, "Roseburia intestinalis")) %>%
+  mutate(Disease = ifelse(Disease.MESH.ID == "D003924", "T2D", "Healthy")) %>%
+  ggplot(aes(rel_abund, fill = Disease)) +
+    geom_histogram(bins = 30, position = "identity", alpha = 0.6) +
+    scale_fill_manual(values = c("Healthy" = "#56B4E9", "T2D" = "#E74C3C")) +
+    labs(x = "Relative abundance", y = "Number of samples",
+         title = "Roseburia intestinalis abundance by disease") +
+    theme_bw()
+```
+
+Is Roseburia intestinalis detected (present vs absent) at different rates between the groups? Prevalence per group and a Fisher's exact test on presence/absence.
+```{r ros-presence-absence}
+ros_pa <- ros_dat %>%
+  mutate(present = rel_abund > 0,
+         Disease = ifelse(Disease.MESH.ID == "D003924", "T2D", "Healthy"))
+
+ros_pa %>%
+  group_by(Disease) %>%
+  summarise(n          = dplyr::n(),
+            n_present  = sum(rel_abund > 0),
+            prevalence = mean(rel_abund > 0),
+            .groups = "drop")
+
+tab <- table(Disease = ros_pa$Disease, Present = ros_pa$present)
+tab
+fisher.test(tab)
+```
+
+Extending the presence/absence analysis to every taxon in the heatmap: prevalence per group and a BH-adjusted Fisher's exact test for each, to see how much of the differential abundance is a presence/absence (prevalence) effect.
+```{r heatmap-taxa-presence-absence}
+pa_all <- dat_rel %>%
+  filter(taxon %in% sig_taxa) %>%
+  mutate(present = rel_abund > 0,
+         Disease = ifelse(Disease.MESH.ID == "D003924", "T2D", "Healthy")) %>%
+  group_by(taxon, Species) %>%
+  group_modify(~ {
+    ft <- fisher.test(table(.x$Disease, .x$present))
+    tibble(prev_Healthy = mean(.x$present[.x$Disease == "Healthy"]),
+           prev_T2D     = mean(.x$present[.x$Disease == "T2D"]),
+           odds_ratio   = unname(ft$estimate),
+           fisher_p     = ft$p.value)
+  }) %>%
+  ungroup() %>%
+  mutate(fisher_q = p.adjust(fisher_p, method = "BH")) %>%
+  arrange(fisher_q)
+
+pa_all
+```
+
